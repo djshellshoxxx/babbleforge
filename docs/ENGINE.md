@@ -482,7 +482,7 @@ All criteria are measurable. "Factory preset" means every Area × Strategy combi
 | A-TM-1 | Mean active talkers | Over 1 h: measured mean within ±5 % of configured mean; min/max bounds never violated (except during starvation events, which are counted) |
 | A-TM-2 | Macro monotonicity | Across Character 0, 0.5, 1: median gap and 95th-percentile gap strictly decrease; envelope L10−L90 strictly decreases |
 | A-TM-3 | Laboratory talker series | 1/2/4/8/16-talker fixtures: equal RMS (±0.2 dB), equal LTASS (±1 dB 1/3-oct), envelope modulation depth monotonically decreasing with N |
-| A-TM-4 | Repetition | 8 h run: no segment reused inside its cooldown; no identical (segment, offset) pair within 8 h when corpus ≥ 24 speakers × 15 min |
+| A-TM-4 | Repetition | 8 h run: no material region reused inside its effective cooldown (`TALKER_ENGINE.md` §6.4); effective cooldown ≥ 30 min with the reference corpus (≥ 24 speakers × 15 min) at the Office default; no speaker selected while already active; no two consecutive selections of the same speaker |
 
 ### 12.4 Spatial
 

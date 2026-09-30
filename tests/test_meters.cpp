@@ -80,53 +80,42 @@ TEST_CASE("Loudness: single channel is 3.01 LU below stereo", "[meters][lufs]") 
 }
 
 TEST_CASE("Loudness: gating (Tech 3341 test 3/4/5 structures)", "[meters][lufs][gating]") {
-  // Relative gate: low, high, low segments. The gate lies 10 LU below the mean energy of all
-  // blocks above -70 LUFS, so the low level must be well below that to be excluded.
+  // Test 3: -36 dBFS 10 s, -23 dBFS 60 s, -36 dBFS 10 s (stereo 1 kHz sine).
+  // Expected integrated loudness: -23.0 ±0.1 LUFS per EBU Tech 3341.
   {
     Meters m;
     m.prepare(kFs, 2);
     SineFeeder f;
-    f.feed(m, 2, -40.0, 20.0);
-    f.feed(m, 2, -23.0, 20.0);
-    f.feed(m, 2, -40.0, 20.0);
+    f.feed(m, 2, -36.0, 10.0);
+    f.feed(m, 2, -23.0, 60.0);
+    f.feed(m, 2, -36.0, 10.0);
     CHECK(m.snapshot().lufsI == Approx(-23.0).margin(0.1));
   }
-  // Same structure as Tech 3341 test 3 (-36 / -23 / -36, 20 s each): -36 LUFS is only 9.3 LU
-  // below the ungated mean (-27.3 LUFS), i.e. inside the relative gate, so I is that mean.
-  {
-    Meters m;
-    m.prepare(kFs, 2);
-    SineFeeder f;
-    f.feed(m, 2, -36.0, 20.0);
-    f.feed(m, 2, -23.0, 20.0);
-    f.feed(m, 2, -36.0, 20.0);
-    const double expected = -23.0 + 10.0 * std::log10((20.0 + 40.0 * std::pow(10.0, -1.3)) / 60.0);
-    const auto s = m.snapshot();
-    CHECK(s.lufsI == Approx(expected).margin(0.1));
-    CHECK(s.lufsS == Approx(-36.0).margin(0.1));
-  }
-  // Test 4 structure (absolute gate): -72 / -36 / -23 / -36 / -72 -> the -72 blocks are dropped
-  // by the absolute gate, -36 blocks stay inside the relative gate (mean of -36,-23,-36 blocks).
+  // Test 4: -72 dBFS 10 s, -36 dBFS 10 s, -23 dBFS 60 s, -36 dBFS 10 s, -72 dBFS 10 s.
+  // -72 blocks filtered by absolute gate; remaining structure is like Test 3.
+  // Expected integrated loudness: -23.0 ±0.1 LUFS per EBU Tech 3341.
   {
     Meters m;
     m.prepare(kFs, 2);
     SineFeeder f;
     f.feed(m, 2, -72.0, 10.0);
     f.feed(m, 2, -36.0, 10.0);
-    f.feed(m, 2, -23.0, 10.0);
+    f.feed(m, 2, -23.0, 60.0);
     f.feed(m, 2, -36.0, 10.0);
     f.feed(m, 2, -72.0, 10.0);
-    const double expected = -23.0 + 10.0 * std::log10((10.0 + 20.0 * std::pow(10.0, -1.3)) / 30.0);
-    CHECK(m.snapshot().lufsI == Approx(expected).margin(0.1));
+    CHECK(m.snapshot().lufsI == Approx(-23.0).margin(0.1));
   }
-  // Test 5 structure: -26 / -20 / -26 / -20 / -26 at 20 s each: I = -23.0 (all blocks pass the gate).
+  // Test 5: -26 dBFS 20 s, -20 dBFS 20.1 s, -26 dBFS 20 s (stereo 1 kHz sine).
+  // All blocks pass the absolute and relative gates.
+  // Expected integrated loudness: -23.0 ±0.1 LUFS per EBU Tech 3341.
   {
     Meters m;
     m.prepare(kFs, 2);
     SineFeeder f;
-    for (double lv : {-26.0, -20.0, -26.0}) f.feed(m, 2, lv, 20.0);
-    const double e = (std::pow(10.0, -2.6) * 2.0 + std::pow(10.0, -2.0)) / 3.0;
-    CHECK(m.snapshot().lufsI == Approx(10.0 * std::log10(e)).margin(0.1));
+    f.feed(m, 2, -26.0, 20.0);
+    f.feed(m, 2, -20.0, 20.1);
+    f.feed(m, 2, -26.0, 20.0);
+    CHECK(m.snapshot().lufsI == Approx(-23.0).margin(0.1));
   }
   // Only a -72 LUFS signal: everything is below the absolute gate.
   Meters q;

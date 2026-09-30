@@ -1,6 +1,7 @@
 #include "core/talker/VoiceRenderer.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 

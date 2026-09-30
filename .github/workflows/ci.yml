@@ -9,28 +9,20 @@ on:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        compiler:
-          - { os: ubuntu-latest, cc: gcc, cxx: g++ }
-          - { os: ubuntu-latest, cc: clang, cxx: clang++ }
-          - { os: windows-latest, cc: msvc, cxx: msvc }
-
-        exclude:
-          - os: windows-latest
-            compiler: { os: ubuntu-latest, cc: gcc, cxx: g++ }
-          - os: windows-latest
-            compiler: { os: ubuntu-latest, cc: clang, cxx: clang++ }
-          - os: ubuntu-latest
-            compiler: { os: windows-latest, cc: msvc, cxx: msvc }
-
+        include:
+          - { name: linux-gcc,   os: ubuntu-latest,  cc: gcc,   cxx: g++ }
+          - { name: linux-clang, os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          - { name: windows-msvc, os: windows-latest, cc: cl,   cxx: cl }
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Setup MSVC
-      if: matrix.compiler.cc == 'msvc'
+      if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
 
     - name: Configure
@@ -38,8 +30,8 @@ jobs:
       run: |
         cmake -S . -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} \
-          -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}
+          -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
 
     - name: Build
       shell: bash

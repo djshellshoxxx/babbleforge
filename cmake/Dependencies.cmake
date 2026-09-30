@@ -67,7 +67,14 @@ set(INSTALL_PKGCONFIG_MODULES OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(flac r8brain libfvad)
 if(BF_WITH_CORPUS_DB AND NOT BF_SQLITE_USE_SYSTEM)
+  # No URL_HASH: the archive hash could not be verified from this environment.
+  message(STATUS "Fetching the SQLite amalgamation from sqlite.org; if the download fails "
+                 "(offline/firewalled), re-configure with -DBF_SQLITE_USE_SYSTEM=ON")
   FetchContent_MakeAvailable(sqlite_amalgamation)
+  if(NOT EXISTS "${sqlite_amalgamation_SOURCE_DIR}/sqlite3.c")
+    message(FATAL_ERROR "Could not download the SQLite amalgamation from sqlite.org. "
+                        "Re-run CMake with -DBF_SQLITE_USE_SYSTEM=ON to use the system SQLite3 instead.")
+  endif()
 endif()
 
 set(BUILD_TESTING ON CACHE BOOL "" FORCE)

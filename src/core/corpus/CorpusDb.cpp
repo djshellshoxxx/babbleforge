@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "core/corpus/CorpusDb.h"
 
 #include <sqlite3.h>
@@ -391,6 +392,25 @@ std::int64_t CorpusDb::countRows(const std::string& table) const {
     if (sqlite3_step(s) == SQLITE_ROW) n = sqlite3_column_int64(s, 0);
     sqlite3_finalize(s);
     return n;
+}
+
+int CorpusDb::purgeOldCaches(const std::string& root) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<std::pair<fs::file_time_type, fs::path>> gens;
+    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        if (name.rfind("cache.old-", 0) != 0 || !it->is_directory(ec)) continue;
+        gens.emplace_back(fs::last_write_time(it->path(), ec), it->path());
+    }
+    std::sort(gens.begin(), gens.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second > b.second; });
+    int removed = 0;
+    for (std::size_t i = 1; i < gens.size(); ++i) {
+        ec.clear();
+        fs::remove_all(gens[i].second, ec);
+        if (!ec) ++removed;
+    }
+    return removed;
 }
 
 }  // namespace bf

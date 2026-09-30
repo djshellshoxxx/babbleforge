@@ -21,7 +21,7 @@ const FirDesignResult& ltassDesign() {
     static const FirDesignResult r = [] {
         auto ds = loadDataSet(BF_DATA_DIR);
         REQUIRE(ds.ok);
-        auto t = buildSpectrumTarget(ds.data.targets.at("ltass_universal_byrne1994"));
+        auto t = buildSpectrumTarget(ds.data.targets.at("ltass_universal"));
         REQUIRE(t.target);
         FirDesignParams p;
         p.fs = kFs;

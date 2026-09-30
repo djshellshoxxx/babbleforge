@@ -131,9 +131,14 @@ int MacroTables::formulaMax(double c, double m) const {
 }
 
 std::pair<int, int> MacroTables::bounds(double m, double c, double mArea, int areaMin, int areaMax) const {
+  return bounds(m, c, mArea, areaMin, areaMax, 0.5);
+}
+
+std::pair<int, int> MacroTables::bounds(double m, double c, double mArea, int areaMin, int areaMax,
+                                        double cArea) const {
   if (areaMin > 0 && areaMax > 0) {
-    const double dMin = std::max(1, formulaMin(0.5, mArea));
-    const double dMax = std::max(1, formulaMax(0.5, mArea));
+    const double dMin = std::max(1, formulaMin(cArea, mArea));
+    const double dMax = std::max(1, formulaMax(cArea, mArea));
     return {static_cast<int>(std::lround(areaMin * formulaMin(c, m) / dMin)),
             static_cast<int>(std::lround(areaMax * formulaMax(c, m) / dMax))};
   }
@@ -142,11 +147,16 @@ std::pair<int, int> MacroTables::bounds(double m, double c, double mArea, int ar
 
 TalkerCounts MacroTables::talkerCounts(double mBase, double c, double mArea, int areaMin, int areaMax,
                                        int areaPool) const {
+  return talkerCounts(mBase, c, mArea, areaMin, areaMax, areaPool, 0.5);
+}
+
+TalkerCounts MacroTables::talkerCounts(double mBase, double c, double mArea, int areaMin, int areaMax,
+                                       int areaPool, double cArea) const {
   TalkerCounts t;
   t.meanAfterVoiceAmount = mBase;
-  const double f05 = characterMeanFactor(0.5);
-  t.mean = mBase * characterMeanFactor(c) / (f05 > 0 ? f05 : 1.0);
-  std::tie(t.minActive, t.maxActive) = bounds(t.mean, c, mArea, areaMin, areaMax);
+  const double fa = characterMeanFactor(cArea);
+  t.mean = mBase * characterMeanFactor(c) / (fa > 0 ? fa : 1.0);
+  std::tie(t.minActive, t.maxActive) = bounds(t.mean, c, mArea, areaMin, areaMax, cArea);
   t.minActive = std::clamp(t.minActive, 0, static_cast<int>(std::floor(t.mean)));
   t.maxActive = std::max(t.maxActive, static_cast<int>(std::ceil(t.mean - 1e-9)));
   t.pool = std::max(voiceAmountPool(mBase, areaPool), t.maxActive);

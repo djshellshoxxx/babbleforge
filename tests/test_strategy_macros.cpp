@@ -47,10 +47,10 @@ TEST_CASE("Voice Amount anchors are exact and log-interpolated (§9)", "[strateg
   CHECK(mt.voiceAmountPool(16.0, 14) == 31);
   CHECK(mt.voiceAmountPool(3.5, 14) == 14);
 
-  // Through the plan: v = 1 in Office at Character 0.5 -> m = 16, pool 31.
+  // Through the plan: v = 1 in Office at its default Character 0.55 -> m = 16, pool 31.
   bf::MacroState m;
   m.voiceAmount = 1.0;
-  m.character = 0.5;
+  m.character = 0.55;
   auto p = plan("balanced", "office", m);
   CHECK(p.talkers.mean == Approx(16.0));
   CHECK(p.talkers.pool == 31u);
@@ -214,26 +214,26 @@ TEST_CASE("CVR r=1 gives min floor 3 when satisfiable and never raises the mean"
       }
     }
 
-  // Unsatisfiable: v = 0, c = 0 -> m = 2.45; floor 3 > m - 1, lowered and reported.
+  // Unsatisfiable: v = 0, c = 0 -> m = 3.5 * 0.7 / 1.045; floor 3 > m - 1, lowered and reported.
   bf::MacroState u;
   u.voiceAmount = 0.0;
   u.character = 0.0;
   u.clearVoiceReduction = 1.0;
   const auto p = plan("balanced", "office", u);
-  CHECK(p.talkers.mean == Approx(2.45));
+  CHECK(p.talkers.mean == Approx(3.5 * 0.7 / 1.045));
   CHECK(p.talkers.minActive == 1u);
   CHECK(static_cast<double>(p.talkers.minActive) <= p.talkers.mean - 1.0);
   CHECK(hasAdj(p, "talkers.cvrMinFloor"));
 }
 
 TEST_CASE("CVR minimum stationary fraction and orthogonality", "[strategy][macros][cvr]") {
-  // Common area natural-leaning: stationary 0.15, Character 0 -> Δs -0.10 -> 0.05; CVR High -> 0.10.
+  // Common area natural-leaning: stationary 0.15 at c_a = 0.25 (Δs -0.05); Character 0 -> Δs(0) - Δs(c_a) = -0.05 -> 0.10.
   bf::MacroState m;
   m.character = 0.0;
   m.clearVoiceReduction = 1.0;
   CHECK(plan("balanced", "common_area", m).mix.stationaryFraction() == Approx(0.10));
   m.clearVoiceReduction = 0.0;
-  CHECK(plan("balanced", "common_area", m).mix.stationaryFraction() == Approx(0.05));
+  CHECK(plan("balanced", "common_area", m).mix.stationaryFraction() == Approx(0.10));
   // Hybrid (explicit mix slider): Δs and the CVR minimum are ignored.
   m.clearVoiceReduction = 1.0;
   bf::StrategyParams p;

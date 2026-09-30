@@ -42,12 +42,9 @@ SpatialAlgorithm resolveAlgorithm(const std::string& req, const OutputLayout& la
   return autoAlg;  // "auto" and unknown values
 }
 
-// Resolves a target id: exact, else a data-set id that starts with "<id>_" (e.g. the Area
-// value "ltass_universal" names the file target "ltass_universal_byrne1994").
+// Target ids are explicit: exact match only (unknown ids fall back to ltass_universal).
 const SpectrumTargetDef* findTarget(const std::map<std::string, SpectrumTargetDef>& targets, const std::string& id) {
   if (auto it = targets.find(id); it != targets.end()) return &it->second;
-  for (const auto& [k, v] : targets)
-    if (k.rfind(id + "_", 0) == 0) return &v;
   return nullptr;
 }
 
@@ -353,13 +350,14 @@ void MaskStrategy::buildStochasticTalkers(MaskRenderPlan& plan, const AreaModel&
   // 1. Voice Amount (§9) and 2. Character (§5.1) talker counts.
   const double mArea = area.talkers.meanActive;
   const double mV = mt.voiceAmountMean(v, mArea);
-  TalkerCounts tc = mt.talkerCounts(mV, c, mArea, area.talkers.minActive, area.talkers.maxActive, area.talkers.pool);
+  TalkerCounts tc = mt.talkerCounts(mV, c, mArea, area.talkers.minActive, area.talkers.maxActive, area.talkers.pool,
+                                     area.macros.character);
   double mean = std::clamp(tc.mean, vr.meanMin, vr.meanMax);
   int mn = tc.minActive, mx = tc.maxActive, pool = tc.pool;
   // Step 5: user overrides. A user mean replaces the macro result; min/max are re-derived.
   if (p.meanActive) {
     mean = *p.meanActive;
-    std::tie(mn, mx) = mt.bounds(mean, c, mArea, area.talkers.minActive, area.talkers.maxActive);
+    std::tie(mn, mx) = mt.bounds(mean, c, mArea, area.talkers.minActive, area.talkers.maxActive, area.macros.character);
     mx = std::max(mx, static_cast<int>(std::ceil(mean - 1e-9)));
     pool = std::max(mt.voiceAmountPool(mean, area.talkers.pool), mx);
   }
@@ -472,7 +470,8 @@ MaskRenderPlan StochasticBabbleStrategy::buildPlan(const AreaModel& area, const 
   bool locked = false;
   const double b = baseBabbleFraction(area, p, locked);
   const CharacterValues cv = env_->macros.character(c);
-  applyMix(plan, p, b, locked, cv.stationaryOffset, env_->macros.cvr(r).minStationaryFraction);
+  applyMix(plan, p, b, locked, cv.stationaryOffset - env_->macros.character(area.macros.character).stationaryOffset,
+           env_->macros.cvr(r).minStationaryFraction);
   applyMotion(plan, area, p, c);
   finalize(plan);
   return plan;

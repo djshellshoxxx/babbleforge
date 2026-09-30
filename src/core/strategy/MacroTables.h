@@ -58,8 +58,13 @@ public:
   // areaMin/areaMax <= 0 means "no explicit bounds" (formula rows are used). The result obeys
   // min <= floor(mean), ceil(mean) <= max <= pool; pool follows the §9 rule on mBase.
   // min/max for mean m at c under the rule above (before the min <= m <= max clamp).
+  // Area values hold at the Area's own default Character cArea (default overloads: 0.5);
+  // everything scales by factor(c) / factor(cArea).
   std::pair<int, int> bounds(double m, double c, double mArea, int areaMin, int areaMax) const;
+  std::pair<int, int> bounds(double m, double c, double mArea, int areaMin, int areaMax, double cArea) const;
   TalkerCounts talkerCounts(double mBase, double c, double mArea, int areaMin, int areaMax, int areaPool) const;
+  TalkerCounts talkerCounts(double mBase, double c, double mArea, int areaMin, int areaMax, int areaPool,
+                            double cArea) const;
   double levelVarTruncationSigma() const noexcept { return truncSigma_; }
 
   CvrValues cvr(double r) const;

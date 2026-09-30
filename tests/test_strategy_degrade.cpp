@@ -27,7 +27,7 @@ bf::DegradeReason insufficient(int s) {
 // Office / balanced at c = 0.5: pool 14, mean 6.5, min 4, max 9, b 0.70, needed 14.
 bf::MaskRenderPlan officeBalanced(bf::FallbackPolicy policy = bf::FallbackPolicy::Continuous) {
   bf::MacroState m;
-  m.character = 0.5;
+  m.character = 0.55;
   bf::StrategyParams p;
   p.fallback = policy;
   return plan("balanced", "office", m, p);

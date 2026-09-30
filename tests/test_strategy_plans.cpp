@@ -26,27 +26,19 @@ bool hasAdj(const std::vector<bf::Adjustment>& v, const std::string& path) {
 }  // namespace
 
 TEST_CASE("office / balanced plan matches the documented defaults", "[strategy][plan]") {
-  // At the Balanced anchor (c = 0.5) the Area table values apply exactly (PRESETS.md §3.1).
+  // Area values hold at the Area's own default Character c_a = 0.55 (MASK_STRATEGIES.md §5.1).
   bf::MacroState m;
-  m.character = 0.5;
+  m.character = 0.55;
   auto p = plan("balanced", "office", m);
   CHECK(p.strategyId == bf::StrategyId::Balanced);
   CHECK(p.strategyClass == bf::StrategyClass::HybridMask);
-  CHECK(p.mix.babbleFraction == Approx(0.70));
-  CHECK(p.talkers.mean == Approx(6.5));
-  CHECK(p.talkers.minActive == 4u);
-  CHECK(p.talkers.maxActive == 9u);
-  CHECK(p.talkers.pool == 14u);
-  CHECK(p.talkers.maxGapMs == Approx(250.0));
   CHECK(p.talkers.mode == bf::PlanMode::Stochastic);
 
-  // Area default Character 0.55 (ENGINE.md §8): b base 0.70, counts 4 / 9 / pool 14,
-  // interpolated gap; the Character scaling adds the documented "small density bias".
   p = plan("balanced", "office");
   CHECK(p.character == Approx(0.55));
   CHECK(p.mix.baseBabbleFraction == Approx(0.70));
-  CHECK(p.mix.babbleFraction == Approx(1.0 - (0.30 + 0.015)));
-  CHECK(p.talkers.mean == Approx(6.5 * 1.045));
+  CHECK(p.mix.babbleFraction == Approx(0.70));
+  CHECK(p.talkers.mean == Approx(6.5));
   CHECK(p.talkers.minActive == 4u);
   CHECK(p.talkers.maxActive == 9u);
   CHECK(p.talkers.pool == 14u);
@@ -323,12 +315,12 @@ TEST_CASE("all areas x strategies produce valid plans", "[strategy][plan]") {
 TEST_CASE("§9 clamp: mean <= available speakers - 2", "[strategy][plan]") {
   bf::MacroState m;
   m.voiceAmount = 1.0;
-  m.character = 1.0;  // m = 23.2, max 28, pool 31
+  m.character = 1.0;  // m = 16 * 1.45 / 1.045, max 27, pool 31
   bf::CorpusSummary c;
   c.availableSpeakers = 40;
   auto p = plan("balanced", "office", m, {}, c);
-  CHECK(p.talkers.mean == Approx(23.2));
-  CHECK(p.talkers.maxActive == 28u);
+  CHECK(p.talkers.mean == Approx(16.0 * 1.45 / 1.045));
+  CHECK(p.talkers.maxActive == 27u);
   CHECK(p.talkers.pool == 31u);
   // Binding case: user mean = max = 32 with 33 speakers -> m <= 31.
   bf::StrategyParams sp;
@@ -404,4 +396,17 @@ TEST_CASE("composePlan wires compose + validate + buildPlan", "[strategy][compos
   CHECK(d.plan.planHash == plan("balanced", "office").planHash);
   p.strategy = "nope";
   CHECK_FALSE(bf::composePlan(dataSet(), p, bigCorpus(), bf::makeStereoLayout()).ok);
+}
+
+TEST_CASE("every area/strategy spectrum target id resolves exactly", "[strategy][target]") {
+  const auto& ds = dataSet();
+  for (const auto& [id, a] : ds.areas)
+    if (a.spectrum.target != "custom") CHECK(ds.targets.count(a.spectrum.target) == 1);
+  CHECK(ds.targets.count("ltass_universal") == 1);
+  // Unknown id: no prefix matching; adjustment + ltass_universal.
+  bf::StrategyParams sp;
+  sp.spectrumTarget = "ltass";
+  const auto p = plan("balanced", "office", {}, sp);
+  CHECK(hasAdj(p.adjustments, "spectrum.target"));
+  CHECK(p.target.id == "ltass_universal");
 }

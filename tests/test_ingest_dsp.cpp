@@ -174,11 +174,19 @@ TEST_CASE("YIN F0 on harmonic signals", "[ingest][yin]") {
 TEST_CASE("clipping detector", "[ingest][clip]") {
     constexpr double fs = 48000.0;
     SECTION("clean sine") {
-        // (A pure low-frequency sine has >= 3 samples within 0.01 dB of its peak, which the
-        // §1.3 rule counts as clipping; 3 kHz has one sample per peak.)
         const auto x = sine(3000.0, 0.5, 2.0, fs);
         const auto r = detectClipping(x.data(), x.size(), 1, fs);
         CHECK(r.ratio < 1e-5);
+    }
+    SECTION("smooth 50 Hz sine at -1 dBFS is not clipped (flat-top rule)") {
+        const auto x = sine(50.0, 0.8913, 2.0, fs);
+        const auto r = detectClipping(x.data(), x.size(), 1, fs);
+        CHECK(r.ratio == Approx(0.0));
+    }
+    SECTION("hard-clipped 50 Hz sine is flagged") {
+        auto x = sine(50.0, 1.5, 2.0, fs);
+        for (auto& v : x) v = std::clamp(v, -0.8913f, 0.8913f);
+        CHECK(detectClipping(x.data(), x.size(), 1, fs).ratio > 1e-3);
     }
     SECTION("hard-clipped sine is flagged with runs > 3 ms") {
         auto x = sine(120.0, 6.0, 2.0, fs);

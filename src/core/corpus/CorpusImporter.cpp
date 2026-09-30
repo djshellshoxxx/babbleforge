@@ -477,9 +477,24 @@ ImportResult importCorpus(const ImportOptions& opt) {
         for (std::size_t i = 0; i < nFiles; ++i) links[std::to_string(i + 1)] = files[i].second.generic_string();
 
     fs::create_directories(opt.corpusRoot, ec);
-    const fs::path oldCache = opt.corpusRoot / ".cache.old";
-    fs::remove_all(oldCache, ec);
-    if (fs::exists(opt.corpusRoot / "cache", ec)) fs::rename(opt.corpusRoot / "cache", oldCache, ec);
+    // The previous cache is kept as cache.old-<version> (readers may still hold files from it);
+    // older generations are purged at the start of the next import or via purgeOldCaches().
+    CorpusDb::purgeOldCaches(opt.corpusRoot.string());
+    if (fs::exists(opt.corpusRoot / "cache", ec)) {
+        std::string oldVersion = "unknown";
+        {
+            std::ifstream mf(opt.corpusRoot / "manifest.json");
+            const auto doc = nlohmann::json::parse(mf, nullptr, false);
+            if (doc.is_object() && doc.contains("corpusVersion") && doc["corpusVersion"].is_string()) {
+                std::string v = doc["corpusVersion"].get<std::string>();
+                v.erase(std::remove_if(v.begin(), v.end(), [](unsigned char ch) { return !std::isalnum(ch); }), v.end());
+                if (!v.empty()) oldVersion = v;
+            }
+        }
+        const fs::path oldCache = opt.corpusRoot / ("cache.old-" + oldVersion);
+        fs::remove_all(oldCache, ec);
+        fs::rename(opt.corpusRoot / "cache", oldCache, ec);
+    }
     ec.clear();
     fs::rename(staging / "cache", opt.corpusRoot / "cache", ec);
     if (ec) return fail("cannot install cache: " + ec.message());
@@ -488,7 +503,6 @@ ImportResult importCorpus(const ImportOptions& opt) {
     if (opt.storeSourcePaths) writeFileAtomic(opt.corpusRoot / "source_links.json", links.dump(2), nullptr);
     else fs::remove(opt.corpusRoot / "source_links.json", ec);
     if (!writeFileAtomic(opt.corpusRoot / "manifest.json", man.dump(2), &err)) return fail(err);
-    fs::remove_all(oldCache, ec);
     fs::remove_all(staging, ec);
     res.ok = true;
     return res;

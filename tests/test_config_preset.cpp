@@ -172,10 +172,9 @@ TEST_CASE("compose: office + balanced", "[config][compose]") {
 
   p.strategy = "multi_voice";
   CHECK(bf::compose(ds.data, p).config.babbleFraction == Approx(1.0));
-  p.strategy = "dense";  // forced character >= 0.75
+  p.strategy = "dense";  // characterDefault 0.9 (same default the plan uses)
   auto d = bf::compose(ds.data, p);
-  CHECK(d.config.character == Approx(0.75));
-  CHECK(d.adjustments.size() == 1);
+  CHECK(d.config.character == Approx(0.9));
   p.strategy = "nope";
   CHECK_FALSE(bf::compose(ds.data, p).ok);
 }

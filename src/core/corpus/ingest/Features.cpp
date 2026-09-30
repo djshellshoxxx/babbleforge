@@ -96,7 +96,10 @@ ClipResult detectClipping(const float* x, std::size_t n, std::size_t stride, dou
         const double a = std::fabs(x[i * stride]);
         if (a >= 0.999) mark[i] = 1;
         if (a >= thr) {
-            ++run;
+            // Flat top: consecutive samples must also agree to ~1 LSB at 16 bit (2^-17, see Features.h), so a smooth
+            // low-frequency sine near its peak is not flagged.
+            const bool flat = run > 0 && std::fabs(static_cast<double>(x[i * stride]) - static_cast<double>(x[(i - 1) * stride])) <= 0x1p-17;
+            run = (run == 0 || flat) ? run + 1 : 1;
             if (run == 3) mark[i - 2] = mark[i - 1] = 1;
             if (run >= 3) mark[i] = 1;
         } else {

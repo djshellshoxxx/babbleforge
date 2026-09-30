@@ -1,6 +1,7 @@
 // End-to-end tests of the on-disk corpus: import -> SQLite/FLAC cache -> snapshot + audio source.
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <map>
@@ -416,6 +417,22 @@ SECTION("corpusVersion is stable across re-imports (thread count, root)") {
     CHECK(r3.corpusVersion == b.res.corpusVersion);
     CHECK_FALSE(std::filesystem::exists(opt.corpusRoot / ".staging"));
     CHECK_FALSE(std::filesystem::exists(opt.corpusRoot / ".cache.old"));
+    // The previous cache generation is retained as cache.old-<version>, not deleted at once.
+    CHECK(std::filesystem::is_directory(opt.corpusRoot / ("cache.old-" + b.res.corpusVersion)));
+    {
+        namespace fs = std::filesystem;
+        fs::create_directories(opt.corpusRoot / "cache.old-aaaa");
+        fs::create_directories(opt.corpusRoot / "cache.old-zzzz");
+        fs::last_write_time(opt.corpusRoot / "cache.old-aaaa", fs::file_time_type::clock::now() - std::chrono::hours(48));
+        fs::last_write_time(opt.corpusRoot / "cache.old-zzzz", fs::file_time_type::clock::now() + std::chrono::hours(48));
+        CHECK(CorpusDb::purgeOldCaches(opt.corpusRoot.string()) == 2);  // keeps only the newest (zzzz)
+        CHECK(fs::exists(opt.corpusRoot / "cache.old-zzzz"));
+        CHECK_FALSE(fs::exists(opt.corpusRoot / "cache.old-aaaa"));
+        CHECK_FALSE(fs::exists(opt.corpusRoot / ("cache.old-" + b.res.corpusVersion)));
+        fs::create_directories(opt.corpusRoot / "cache.old-aaaa");
+        REQUIRE(importCorpus(opt).ok);  // next import purges superseded generations first
+        CHECK_FALSE(fs::exists(opt.corpusRoot / "cache.old-aaaa"));
+    }
     LoadedCorpus lc;
     REQUIRE(loadCorpus(opt.corpusRoot, lc));
     CHECK(lc.snapshot->corpusVersion() == b.res.corpusVersion);

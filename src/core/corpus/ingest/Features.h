@@ -15,7 +15,7 @@ namespace bf::ingest {
 P56Result p56MethodB(const float* x, std::size_t n, double fs);
 
 // Clipping rule of §1.3 on one channel at rate fs: |x| >= 0.999, or >= 3 consecutive samples
-// within 0.01 dB of the file's max |x|; runs separated by < 1 ms are merged.
+// within 0.01 dB of the file's max |x| that also differ from each other by <= 2^-17 (flat top; 2^-15 would still pass a 50 Hz sine at -1 dBFS, whose per-sample sag is 1.9e-5); runs separated by < 1 ms are merged.
 ClipResult detectClipping(const float* x, std::size_t n, std::size_t stride, double fs);
 
 struct LtassResult {

@@ -1,6 +1,7 @@
 {
   "schema": "babbleforge.target/1",
-  "id": "ltass_universal_byrne1994",
+  "id": "ltass_universal",
+  "source": "Byrne et al. 1994 (provisional values)",
   "displayName": "Universal LTASS (Byrne 1994)",
   "bandCentersHz": [
     50,

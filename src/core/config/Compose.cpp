@@ -87,6 +87,7 @@ ComposeResult compose(const DataSet& ds, const Preset& p) {
     c.babbleFraction = std::clamp(c.babbleFraction, strat.forced.babbleFractionRange->first,
                                   strat.forced.babbleFractionRange->second);
   assign(c.character, strat.overrides.character);
+  assign(c.character, strat.overrides.characterDefault);  // same default the plan uses
 
   // Step 4 (macros) is applied by MaskStrategy::buildPlan (core/strategy), which consumes the
   // macro VALUES resolved here; see bf::composePlan() for the full pipeline.

@@ -403,7 +403,7 @@ Every item below is an assumption encoded as [E] that requires experimental veri
 5. **Talker-level variation** σ = 3.0/2.0/1.0 dB: effect on informational masking (dominant-talker salience).
 6. **Clear Voice Reduction** dominance cap and minimum-overlap rules: do they reduce "intelligible fragment" reports?
 7. **Spectrum curve**: LTASS vs speech-matched vs −5/−7/−9 dB/oct per area. Does the −3 dB 125 Hz trim in Small Room help or hurt? Renz et al. found 125 Hz content relevant.
-8. **Spectral correction** loop parameters (τ 90 s, ±6 dB, 0.5 dB/min) — perceptibility of correction changes.
+8. **Spectral correction** loop parameters (τ_c 120 s, 60 s estimator, ±6 dB, 0.5 dB/min) — perceptibility of correction changes.
 9. **Decorrelation**: does all-pass decorrelation of babble add benefit beyond independent-content rendering? Target correlation thresholds (0.3 / 0.15) are engineering values.
 10. **Spatial spread** values per area and the stereo pan limit (far channel ≥ −12 dB): trade-off between diffuse coverage and spatial release from masking.
 11. **Voice diversity vs target similarity**: does "Matched" diversity outperform "High" when target speakers are known?
@@ -491,7 +491,8 @@ All criteria are measurable. "Factory preset" means every Area × Strategy combi
 | A-SPA-1 | Stationary decorrelation | \|ρ\| < 0.02 between any two channels (10 s windows) |
 | A-SPA-2 | Babble correlation | Adjacent-channel ρ: Medium ≤ 0.30, High ≤ 0.15 (95th percentile of 10 s windows) in small-multichannel and distributed modes |
 | A-SPA-3 | Channel energy balance | Long-term (10 min) per-channel RMS within ±1.0 dB of each other (before user trims) |
-| A-SPA-4 | No hard panning | No talker's gain vector has any enabled channel of its zone below −12 dB relative to its maximum channel (stereo/small modes) |
+| A-SPA-4 | No hard panning | Stereo: no talker's far-channel gain below −12.6 dB relative to its near channel. Small multichannel: every talker feeds ≥ 2 outputs, with the second-largest gain ≥ −9 dB relative to the largest (`SPATIAL_ENGINE.md` §3) |
+| A-SPA-5 | Stereo babble correlation | 95th-percentile broadband ρ: Medium ≤ 0.5, High ≤ 0.3 |
 
 ### 12.5 Determinism
 

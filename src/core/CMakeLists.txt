@@ -27,3 +27,15 @@ file(GLOB bf_rng_math_io_sources CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/math/*.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/io/*.cpp)
 target_sources(bfcore PRIVATE ${bf_rng_math_io_sources})
+
+# dsp / analysis modules (globbed)
+file(GLOB bf_dsp_analysis_sources CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/dsp/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/analysis/*.cpp)
+target_sources(bfcore PRIVATE ${bf_dsp_analysis_sources})
+
+# spectrum / engine modules (globbed)
+file(GLOB bf_spectrum_engine_sources CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/spectrum/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/engine/*.cpp)
+target_sources(bfcore PRIVATE ${bf_spectrum_engine_sources})

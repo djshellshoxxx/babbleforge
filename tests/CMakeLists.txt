@@ -3,6 +3,9 @@ add_executable(bfcore_tests
 
 # Glob all test sources with CONFIGURE_DEPENDS
 file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS *.cpp)
+# RT-check tests run in their own binary, linked with the operator new/delete hooks.
+set(rt_check_sources ${CMAKE_CURRENT_SOURCE_DIR}/test_rt_alloc_check.cpp)
+list(REMOVE_ITEM test_sources ${rt_check_sources})
 target_sources(bfcore_tests PRIVATE ${test_sources})
 
 target_link_libraries(bfcore_tests
@@ -18,10 +21,24 @@ target_compile_definitions(bfcore_tests PRIVATE
 
 bf_set_warnings(bfcore_tests)
 
+# RT-check test binary (REALTIME_ARCHITECTURE.md §1.3): allocation hooks always linked here;
+# with BF_RT_CHECK=ON bfcore already carries them.
+add_executable(bfcore_rtcheck_tests ${rt_check_sources})
+if(NOT BF_RT_CHECK)
+  target_sources(bfcore_rtcheck_tests PRIVATE $<TARGET_OBJECTS:bf_rtcheck_hooks>)
+endif()
+target_link_libraries(bfcore_rtcheck_tests PRIVATE bfcore Catch2::Catch2WithMain)
+target_compile_definitions(bfcore_rtcheck_tests PRIVATE
+  BF_DATA_DIR="${PROJECT_SOURCE_DIR}/resources/data"
+  BF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+  BF_TEST_OUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test_out")
+bf_set_warnings(bfcore_rtcheck_tests)
+
 include(CTest)
 include(Catch)
-# Hidden test cases ("[.long]": 5 min / 1 h renders) are not discovered here.
+# Hidden test cases ("[.long]": 5 min / 1 h renders, 10 min soak) are not discovered here.
 catch_discover_tests(bfcore_tests)
+catch_discover_tests(bfcore_rtcheck_tests TEST_PREFIX "rtcheck: ")
 
 # Long acceptance renders (ENGINE.md §12 long forms). Excluded from the default run: they skip
 # (exit code 4, reported as "Skipped") unless BF_LONG_TESTS=1, e.g.

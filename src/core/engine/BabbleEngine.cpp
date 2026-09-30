@@ -45,7 +45,8 @@ BabbleEngine::BabbleEngine(std::shared_ptr<const CorpusSnapshot> snap, IAudioSou
         chainStore_.push_back(std::make_unique<BlockChain>());
         freeChains_.push_back(chainStore_.back().get());
     }
-    renderer_.prepare(cfg_.numChannels, maxVoices, pool_.get(), static_cast<double>(kFs));
+    renderer_.prepare(cfg_.numChannels, maxVoices, pool_.get(), static_cast<double>(kFs), cfg_.externalFeed);
+    ptrs_.assign(cfg_.numChannels, nullptr);
     gbnorm_ = computeCountNorm();
     renderer_.setCountNorm(gbnorm_, 0, true);
     nextTrimUpdate_ = kTrimCadence;
@@ -83,9 +84,36 @@ void BabbleEngine::applyReplan() {
     trimFrozenUntil_ = r.at + kTrimFreeze;
 }
 
+std::vector<std::uint64_t> BabbleEngine::applyReplanNow(const TalkerPlanParams& params, std::int64_t atSample) {
+    TalkerPlanParams p = params;
+    p.talkerRefDbfs = cfg_.busLevelDbfs;
+    const auto discarded = planner_->replan(p, atSample);
+    if (!discarded.empty()) renderer_.dropStale(planner_->epoch(), atSample + TalkerPlanner::kFreeze);
+    gbnorm_ = computeCountNorm();
+    renderer_.setCountNorm(gbnorm_, atSample);
+    return discarded;
+}
+
+void BabbleEngine::consumeOccupancy() noexcept {
+    OccupancyFrame fr;
+    while (renderer_.popOccupancy(fr)) {
+        if (fr.sample < 0) continue;
+        ++stats_.frames;
+        stats_.sumActive += fr.activeTalkers;
+        stats_.sumSpeaking += fr.speakingTalkers;
+        stats_.minActive = std::min<std::uint32_t>(stats_.minActive, fr.activeTalkers);
+        stats_.maxActive = std::max<std::uint32_t>(stats_.maxActive, fr.activeTalkers);
+    }
+}
+
 void BabbleEngine::render(float* const* out, int nCh, int nFrames) {
     if (nCh != static_cast<int>(cfg_.numChannels) || nFrames <= 0) return;
-    std::vector<float*> ptrs(static_cast<std::size_t>(nCh));
+    if (cfg_.externalFeed) {  // RT: planning and preparation run on the host's threads
+        renderer_.process(out, static_cast<std::size_t>(nFrames));
+        pos_ += nFrames;
+        return;
+    }
+    std::vector<float*>& ptrs = ptrs_;
     std::size_t off = 0;
     const auto total = static_cast<std::size_t>(nFrames);
     while (off < total) {
@@ -148,7 +176,7 @@ void BabbleEngine::step(float* const* out, std::size_t n) {
             const std::size_t k = static_cast<std::size_t>(static_cast<std::uint64_t>(need) - w);
             buf.resize(k);
             if (!preparer_.render(*f.pe.layout, f.chainOffset + static_cast<std::int64_t>(w), buf.data(), k))
-                sourceErrors_ = true;
+                sourceErrors_.store(true, std::memory_order_relaxed);
             f.chain->append(*pool_, buf.data(), k);
         }
     }

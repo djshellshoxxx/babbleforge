@@ -29,10 +29,27 @@
 //
 // The babble part requires fs = 48 kHz (the V1 talker planner clock); the stationary part
 // works at every supported rate.
+//
+// Real-time mode (cfg.realtime; used by rt/RealtimeEngine, REALTIME_ARCHITECTURE.md §2): the
+// same DSP graph, with the synchronous parts moved off the RT thread:
+//  - process() (RT) never plans, prepares sources, analyses or allocates. Babble events are
+//    planned, spatially placed and preloaded by the host's planner / preload threads through
+//    babbleMutable() and rtPlaceEvent()/rtUpdateMotion()/rtFeedForwardBalance();
+//  - analysis runs on the host's analysis thread from tap audio (rtAnalyzeTap): trim, channel
+//    balance and spectral correction results are stamped to the fixed 256-frame grid
+//    (effective = RT position + 2048) and sent to RT through an SPSC inbox; corrected kernels
+//    go through the convolvers' RCU slots;
+//  - the first plan is applied on the control thread (rtApplyInitialPlan); live changes are
+//    limited to Strength, babble fraction and limiter ceiling (atomics read once per cell);
+//    any other plan change is a rebuild by the controller (RELIABILITY.md §1.3).
+// Non-RT threads share the planner/analysis-side state under rtServiceMutex(). The offline
+// path (cfg.realtime = false) is unchanged and remains deterministic (D1/D2).
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -52,6 +69,8 @@
 #include "core/engine/HybridMixer.h"
 #include "core/engine/OutputMatrix.h"
 #include "core/engine/StationaryMaskEngine.h"
+#include "core/rt/SeqLock.h"
+#include "core/rt/SpscFifo.h"
 #include "core/spatial/ChannelBalance.h"
 #include "core/spatial/OutputLayout.h"
 #include "core/spatial/SpatialPolicy.h"
@@ -97,6 +116,24 @@ struct MaskEngineConfig {
 
     double staticGainDb = 0.0;                    // two-pass RMS normalisation gain
     double babbleProbeSeconds = 900.0;            // planned-timeline probe for g_bnorm
+
+    // Real-time mode (see the header comment).
+    bool realtime = false;
+    std::size_t blockPoolBlocks = 0;              // babble block pool (0: automatic)
+};
+
+// Real-time mode: output-stage statistics published by the RT thread (seqlock).
+struct RtOutputStats {
+    std::int64_t position = 0;
+    LimiterStats limiter;
+    std::uint64_t grActiveSamples = 0;
+};
+
+// Real-time mode: per-channel babble gain (trim x balance) stamped to a grid boundary.
+struct RtGainStamp {
+    std::int64_t effective = 0;
+    std::uint32_t numChannels = 0;
+    std::array<float, 32> gains{};
 };
 
 struct MaskStatistics {
@@ -206,6 +243,34 @@ public:
     // Talker events (D1 timeline) with absolute engine sample times, events starting < endSample.
     nlohmann::json eventsJson(std::int64_t endSample) const;
 
+    // ---- real-time mode (cfg.realtime) ----
+    static constexpr std::int64_t kStampDelay = 2048;  // Control/Analysis update latency (§8.4)
+
+    // Control thread, before the first process(): applies the first plan at position 0.
+    bool rtApplyInitialPlan(std::string* error = nullptr);
+    std::mutex& rtServiceMutex() const noexcept { return svcMutex_; }
+    BabbleEngine* babbleMutable() noexcept { return babble_.get(); }
+    // Any thread.
+    std::int64_t rtPosition() const noexcept { return rtPos_.load(std::memory_order_acquire); }
+    void rtSetStrengthDb(double db) noexcept { rtStrengthDb_.store(static_cast<float>(db), std::memory_order_relaxed); }
+    void rtSetBabbleFraction(double b) noexcept { rtBabbleB_.store(static_cast<float>(b), std::memory_order_relaxed); }
+    void rtSetLimiterCeilingDb(double db) noexcept { rtCeilingDb_.store(static_cast<float>(db), std::memory_order_relaxed); }
+    double rtStrengthDb() const noexcept { return rtStrengthDb_.load(std::memory_order_relaxed); }
+    double rtBabbleFraction() const noexcept { return rtBabbleB_.load(std::memory_order_relaxed); }
+    RtOutputStats rtOutputStats() const noexcept { return rtOut_.load(); }
+    std::int64_t motionInterval() const noexcept { return motionLen_; }
+    // Planner thread, holding rtServiceMutex(). Babble time (engine time - babbleStartSample()).
+    bool rtPlaceEvent(const TalkerEvent& e, float* gains, std::size_t n);
+    void rtUpdateMotion(std::int64_t babbleNow);
+    void rtFeedForwardBalance();
+    // Analysis thread, holding rtServiceMutex(): tap audio in stream order per tap.
+    void rtAnalyzeTap(int tap, std::int64_t start, const float* const* ch, int nCh, int n);
+    // Analysis thread: sends a pending gain stamp to RT (effective = RT position + kStampDelay).
+    void rtFlushGainStamp();
+    // Control / analysis thread: frees retired kernels.
+    void rtCollectGarbage();
+    std::uint64_t rtStampsDropped() const noexcept { return stampsDropped_; }
+
 private:
     struct Pending { MaskRenderPlan plan; std::int64_t at; };
 
@@ -217,9 +282,11 @@ private:
     void placeNewTalkers(std::int64_t cellStart);
     void updateMotion(std::int64_t dt);
     void feedForwardBalance();
-    void endOfBlock();              // 5 s analysis block (trim, balance feedback)
-    void correctionStep(const SpectrumBlock& blk);
+    void endOfBlock(std::int64_t now);  // 5 s analysis block (trim, balance feedback)
+    void correctionStep(const SpectrumBlock& blk, std::int64_t now);
     void applyStamped();
+    void rtPollInbox() noexcept;
+    double zoneTargetFraction(int c) const noexcept;
     std::int64_t nextSplit(std::int64_t t) const;
     bool crossfading(std::int64_t t) const noexcept { return t < crossfadeUntil_; }
 
@@ -303,6 +370,21 @@ private:
 
     ITapSink* tapSink_ = nullptr;
     std::int64_t pos_ = 0;
+
+    // real-time mode
+    mutable std::mutex svcMutex_;
+    std::atomic<std::int64_t> rtPos_{0};
+    std::atomic<float> rtStrengthDb_{0.0f}, rtBabbleB_{0.0f}, rtCeilingDb_{-1.0f};
+    float appliedStrengthDb_ = 0.0f, appliedB_ = 0.0f, appliedCeilingDb_ = -1.0f;  // RT
+    std::unique_ptr<rt::SpscFifo<RtGainStamp, 64>> inbox_;  // Analysis -> RT
+    RtGainStamp pendingStamp_{};                             // RT
+    bool havePendingStamp_ = false;                          // RT
+    std::uint64_t stampsDropped_ = 0;
+    rt::SeqLock<RtOutputStats> rtOut_;
+    std::vector<std::int64_t> slotStart_;                    // planner (babble time)
+    std::vector<const float*> anaPtr_;                       // analysis scratch
+    std::int64_t anaSamples_ = 0;                            // T4 frames analysed
+    std::array<double, HybridMixer::kMaxZones> zoneOffset_{};
 };
 
 }  // namespace bf

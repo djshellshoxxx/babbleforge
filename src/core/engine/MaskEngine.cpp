@@ -256,6 +256,12 @@ bool MaskEngine::prepare(double fs, const OutputLayout& layout, int maxBlock, st
     pending_.clear();
     history_ = nlohmann::json::array();
     pos_ = 0;
+    rtPos_.store(0, std::memory_order_release);
+    inbox_ = std::make_unique<rt::SpscFifo<RtGainStamp, 64>>();
+    havePendingStamp_ = false;
+    anaPtr_.assign(N, nullptr);
+    anaSamples_ = 0;
+    rtOut_.store(RtOutputStats{});
     prepared_ = true;
     return true;
 }
@@ -263,6 +269,10 @@ bool MaskEngine::prepare(double fs, const OutputLayout& layout, int maxBlock, st
 bool MaskEngine::setPlan(const MaskRenderPlan& plan, std::int64_t effectiveSample, std::string* error) {
     if (!prepared_) {
         if (error) *error = "engine not prepared";
+        return false;
+    }
+    if (cfg_.realtime && current_) {
+        if (error) *error = "real-time mode: plan changes other than Strength / mix / ceiling need a rebuild";
         return false;
     }
     Pending p{plan, std::max(effectiveSample, pos_)};
@@ -299,6 +309,8 @@ bool MaskEngine::createBabble(const MaskRenderPlan& plan, std::int64_t at) {
     bc.busLevelDbfs = cfg_.lRefDbfs;
     bc.trimEnabled = false;  // the trim is applied per channel by this engine
     bc.probeSeconds = cfg_.babbleProbeSeconds;
+    bc.externalFeed = cfg_.realtime;
+    bc.blockPoolBlocks = cfg_.blockPoolBlocks;
     babble_ = std::make_unique<BabbleEngine>(cfg_.corpus, *cfg_.audio, bc);
     babbleStart_ = at;
     currentTalkerHash_ = bc.plan.hash();
@@ -309,6 +321,7 @@ bool MaskEngine::createBabble(const MaskRenderPlan& plan, std::int64_t at) {
     slotPlaced_.assign(VoiceRenderer::kMaxSlots, 0);
     slotEnd_.assign(VoiceRenderer::kMaxSlots, 0);
     slotUsed_.assign(VoiceRenderer::kMaxSlots, 0);
+    slotStart_.assign(VoiceRenderer::kMaxSlots, 0);
     eventCursor_ = 0;
 
     babbleConv_.clear();
@@ -331,7 +344,7 @@ bool MaskEngine::createBabble(const MaskRenderPlan& plan, std::int64_t at) {
         poolLtassDb_ = estimatePoolLtassDb(*cfg_.corpus, *cfg_.audio, spk, &poolReadFailure_);
     }
 
-    placeNewTalkers(at);
+    if (!cfg_.realtime) placeNewTalkers(at);  // real-time: the planner thread places events
     feedForwardBalance();
     for (std::size_t c = 0; c < gainCur_.size(); ++c) gainCur_[c] = gainTarget_[c] = gainStamped_[c];
     gainStampPending_ = false;
@@ -425,8 +438,10 @@ void MaskEngine::applyPlan(const MaskRenderPlan& in, std::int64_t at) {
     // Mix (per zone b = strategy b + zone offset).
     const double b = p.mix.babbleFraction;
     mixer_.setBabbleFraction(b);
-    for (int z = 0; z < HybridMixer::kMaxZones; ++z)
-        mixer_.setZoneOffset(z, p.mix.zoneBabbleFraction[static_cast<std::size_t>(z)] - b);
+    for (int z = 0; z < HybridMixer::kMaxZones; ++z) {
+        zoneOffset_[static_cast<std::size_t>(z)] = p.mix.zoneBabbleFraction[static_cast<std::size_t>(z)] - b;
+        mixer_.setZoneOffset(z, zoneOffset_[static_cast<std::size_t>(z)]);
+    }
     if (first) mixer_.jumpToTarget();
     configuredB_ = b;
 
@@ -527,7 +542,7 @@ void MaskEngine::feedForwardBalance() {
     gainStampPending_ = true;
 }
 
-void MaskEngine::endOfBlock() {
+void MaskEngine::endOfBlock(std::int64_t now) {
     const auto N = static_cast<std::size_t>(nCh_);
     const double n = static_cast<double>(std::max<std::int64_t>(blockN_, 1));
     std::vector<double> p(N);
@@ -544,7 +559,7 @@ void MaskEngine::endOfBlock() {
             for (std::size_t c = 0; c < N; ++c) recent[c] += r[c] / static_cast<double>(recentT1_.size());
         for (double v : recent) pm += v / static_cast<double>(N);
         if (spatial_) spatial_->setRecentEnergy(recent);
-        const bool frozen = pos_ < trimFrozenUntil_ || crossfading(pos_);
+        const bool frozen = now < trimFrozenUntil_ || crossfading(now);
         const bool low = pm < std::pow(10.0, (cfg_.lRefDbfs - 40.0) / 10.0);
         if (cfg_.babbleTrim && !frozen && !low && recentT1_.size() == 2) {
             const double dt = static_cast<double>(blockLen_) / fs_;
@@ -559,11 +574,13 @@ void MaskEngine::endOfBlock() {
         for (std::size_t c = 0; c < N; ++c) gainStamped_[c] = dbToLin(trimDb_) * balance_.gain(static_cast<int>(c));
         gainStampPending_ = true;
     }
-    stationary_.collectGarbage();
-    for (auto& conv : babbleConv_) conv->collectGarbage();
+    if (!cfg_.realtime) {  // real-time: rtCollectGarbage()
+        stationary_.collectGarbage();
+        for (auto& conv : babbleConv_) conv->collectGarbage();
+    }
 }
 
-void MaskEngine::correctionStep(const SpectrumBlock& blk) {
+void MaskEngine::correctionStep(const SpectrumBlock& blk, std::int64_t now) {
     if (!babble_ || !current_ || !haveReference_ || !cfg_.correctionEnabled || cfg_.freezeCorrection) return;
     if (!babbleAnalyzer_.hasLongTerm()) return;
     double pm = 0.0;
@@ -572,10 +589,14 @@ void MaskEngine::correctionStep(const SpectrumBlock& blk) {
     CorrectionFreeze fr;
     fr.lowLevel = pm < std::pow(10.0, (cfg_.lRefDbfs - 20.0) / 10.0);
     fr.lowBabbleFraction = current_->mix.babbleFraction < 0.05;
-    fr.crossfading = crossfading(pos_);
+    fr.crossfading = crossfading(now);
     const CorrectionStepResult r = correction_.step(operatingSlice(powerToDb(babbleAnalyzer_.longTermPower())),
                                                     operatingSlice(referenceDb_), fr);
-    if (r.redesignNeeded) designBabbleKernel(pos_);
+    if (r.redesignNeeded) {
+        // Real-time: stamped to the first grid boundary after RT position + kStampDelay.
+        const std::int64_t at = cfg_.realtime ? ((rtPosition() + kStampDelay + kCell - 1) / kCell) * kCell : now;
+        designBabbleKernel(at);
+    }
 }
 
 void MaskEngine::applyStamped() {
@@ -592,6 +613,29 @@ std::int64_t MaskEngine::nextSplit(std::int64_t t) const {
 }
 
 void MaskEngine::process(float* const* out, int nFrames) {
+    if (cfg_.realtime) {
+        // RT: DSP only. Plans are applied on the control thread (rtApplyInitialPlan); planning,
+        // preload and analysis run on the host's service threads.
+        if (!current_) {
+            for (int c = 0; c < nCh_; ++c) std::memset(out[c], 0, static_cast<std::size_t>(std::max(nFrames, 0)) * sizeof(float));
+            return;
+        }
+        int off = 0;
+        while (off < nFrames) {
+            if (pos_ % kCell == 0) rtPollInbox();
+            const int n = static_cast<int>(std::min<std::int64_t>(nFrames - off, (pos_ / kCell + 1) * kCell - pos_));
+            processCell(out, off, n);
+            off += n;
+            pos_ += n;
+        }
+        RtOutputStats os;
+        os.position = pos_;
+        if (cfg_.limiterStage) os.limiter = limiter_.stats();
+        os.grActiveSamples = grActiveSamples_;
+        rtOut_.store(os);
+        rtPos_.store(pos_, std::memory_order_release);
+        return;
+    }
     int off = 0;
     while (off < nFrames) {
         if (!pending_.empty() && (pending_.front().at <= pos_ || !current_)) {
@@ -622,10 +666,10 @@ void MaskEngine::process(float* const* out, int nFrames) {
             nextMotion_ += motionLen_;
         }
         if (pos_ == nextBlock_) {
-            endOfBlock();
+            endOfBlock(pos_);
             nextBlock_ += blockLen_;
         }
-        for (const SpectrumBlock& b : babbleAnalyzer_.takeBlocks()) correctionStep(b);
+        for (const SpectrumBlock& b : babbleAnalyzer_.takeBlocks()) correctionStep(b, pos_);
         (void)stationaryAnalyzer_.takeBlocks();
     }
 }
@@ -656,20 +700,23 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
     // 2. Stationary (T2).
     stationary_.process(pSta_.data(), un);
 
-    for (std::size_t c = 0; c < N; ++c) {
-        double e1 = 0.0, e2 = 0.0;
-        for (std::size_t i = 0; i < un; ++i) {
-            e1 += static_cast<double>(pBab_[c][i]) * pBab_[c][i];
-            e2 += static_cast<double>(pSta_[c][i]) * pSta_[c][i];
+    const bool rtMode = cfg_.realtime;  // real-time: analysis runs on the analysis thread (taps)
+    if (!rtMode) {
+        for (std::size_t c = 0; c < N; ++c) {
+            double e1 = 0.0, e2 = 0.0;
+            for (std::size_t i = 0; i < un; ++i) {
+                e1 += static_cast<double>(pBab_[c][i]) * pBab_[c][i];
+                e2 += static_cast<double>(pSta_[c][i]) * pSta_[c][i];
+            }
+            blockPowT1_[c] += e1;
+            sumT1_[c] += e1;
+            sumT2_[c] += e2;
+            babbleInMix_ += mixer_.zoneFraction(zoneOf_[c]) * e1;
         }
-        blockPowT1_[c] += e1;
-        sumT1_[c] += e1;
-        sumT2_[c] += e2;
-        babbleInMix_ += mixer_.zoneFraction(zoneOf_[c]) * e1;
+        blockN_ += n;
+        if (babble_) babbleAnalyzer_.process(pBab_.data(), un);
+        stationaryAnalyzer_.process(pSta_.data(), un);
     }
-    blockN_ += n;
-    if (babble_) babbleAnalyzer_.process(pBab_.data(), un);
-    stationaryAnalyzer_.process(pSta_.data(), un);
     if (tapSink_) {
         tapSink_->onTap(0, t0, pBab_.data(), nCh_, n);
         tapSink_->onTap(1, t0, pSta_.data(), nCh_, n);
@@ -677,12 +724,12 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
 
     // 3. Hybrid mixer (T3).
     mixer_.process(pBab_.data(), pSta_.data(), pMix_.data(), n);
-    for (std::size_t c = 0; c < N; ++c) {
+    for (std::size_t c = 0; c < N && !rtMode; ++c) {
         double e = 0.0;
         for (std::size_t i = 0; i < un; ++i) e += static_cast<double>(pMix_[c][i]) * pMix_[c][i];
         sumT3_[c] += e;
     }
-    for (std::size_t i = 0; i < un; ++i) {
+    for (std::size_t i = 0; i < un && !rtMode; ++i) {
         double e = 0.0;
         for (std::size_t c = 0; c < N; ++c) e += static_cast<double>(pMix_[c][i]) * pMix_[c][i];
         frameAcc_ += e / static_cast<double>(N);
@@ -716,26 +763,32 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
     }
     // 8. Out (T4).
     for (std::size_t c = 0; c < N; ++c) {
-        double e = 0.0;
-        for (std::size_t i = 0; i < un; ++i) e += static_cast<double>(pDev_[c][i]) * pDev_[c][i];
-        sumT4_[c] += e;
+        if (!rtMode) {
+            double e = 0.0;
+            for (std::size_t i = 0; i < un; ++i) e += static_cast<double>(pDev_[c][i]) * pDev_[c][i];
+            sumT4_[c] += e;
+        }
         std::memcpy(out[c] + offset, pDev_[c], un * sizeof(float));
     }
-    meters_.process(pDev_.data(), n);
+    if (!rtMode) meters_.process(pDev_.data(), n);
     if (tapSink_) tapSink_->onTap(3, t0, pDev_.data(), nCh_, n);
 }
 
 MaskStatistics MaskEngine::statistics() const {
+    std::unique_lock<std::mutex> lk(svcMutex_, std::defer_lock);
+    if (cfg_.realtime) lk.lock();
+    const std::int64_t pos = cfg_.realtime ? anaSamples_ : pos_;
+    const RtOutputStats ros = cfg_.realtime ? rtOut_.load() : RtOutputStats{};
     MaskStatistics s;
     s.fs = fs_;
     s.numChannels = nCh_;
-    s.samples = pos_;
-    s.seconds = static_cast<double>(pos_) / fs_;
+    s.samples = pos;
+    s.seconds = static_cast<double>(pos) / fs_;
     s.latencySamples = latencySamples();
     s.planChanges = planCounter_ > 0 ? planCounter_ - 1 : 0;
     s.currentPlanId = planCounter_;
     const auto N = static_cast<std::size_t>(nCh_);
-    const double n = static_cast<double>(std::max<std::int64_t>(pos_, 1));
+    const double n = static_cast<double>(std::max<std::int64_t>(pos, 1));
     auto allDb = [&](const std::vector<double>& v) {
         double e = 0.0;
         for (double x : v) e += x;
@@ -758,7 +811,7 @@ MaskStatistics MaskEngine::statistics() const {
     for (double v : m.samplePeakMaxDb) s.samplePeakMaxDb = std::max(s.samplePeakMaxDb, v);
     s.crestDb = s.outputRmsDb > -200.0 ? s.truePeakMaxDb - s.outputRmsDb : 0.0;
 
-    s.configuredBabbleFraction = configuredB_;
+    s.configuredBabbleFraction = cfg_.realtime ? rtBabbleFraction() : configuredB_;
     const double t3 = std::accumulate(sumT3_.begin(), sumT3_.end(), 0.0);
     s.measuredBabbleFraction = t3 > 0.0 ? babbleInMix_ / t3 : 0.0;
 
@@ -808,19 +861,25 @@ MaskStatistics MaskEngine::statistics() const {
 
     s.limiterEnabled = cfg_.limiterStage && limiterEnabled_;
     if (cfg_.limiterStage) {
-        const LimiterStats& ls = limiter_.stats();
+        const LimiterStats& ls = cfg_.realtime ? ros.limiter : limiter_.stats();
         s.limiterGrMaxDb = ls.grDbMax;
         s.clipEvents = ls.clipEvents;
         const double ns = static_cast<double>(std::max<std::uint64_t>(ls.samples, 1));
         s.limiterAbove05Fraction = static_cast<double>(ls.samplesAbove05Db) / ns;
-        s.limiterActiveFraction = static_cast<double>(grActiveSamples_) / ns;
+        s.limiterActiveFraction = static_cast<double>(cfg_.realtime ? ros.grActiveSamples : grActiveSamples_) / ns;
     }
     return s;
 }
 
-nlohmann::json MaskEngine::planHistoryJson() const { return history_; }
+nlohmann::json MaskEngine::planHistoryJson() const {
+    std::unique_lock<std::mutex> lk(svcMutex_, std::defer_lock);
+    if (cfg_.realtime) lk.lock();
+    return history_;
+}
 
 nlohmann::json MaskEngine::eventsJson(std::int64_t endSample) const {
+    std::unique_lock<std::mutex> lk(svcMutex_, std::defer_lock);
+    if (cfg_.realtime) lk.lock();
     nlohmann::json j;
     j["schema"] = "babbleforge.events/1";
     j["seed"] = cfg_.seed;
@@ -843,6 +902,184 @@ nlohmann::json MaskEngine::eventsJson(std::int64_t endSample) const {
     j["babbleStartSample"] = babbleStart_;
     j["events"] = std::move(arr);
     return j;
+}
+
+// ------------------------------------------------------------------------------ real-time mode
+
+bool MaskEngine::rtApplyInitialPlan(std::string* error) {
+    if (!cfg_.realtime || !prepared_ || current_ || pending_.empty()) {
+        if (error) *error = "rtApplyInitialPlan: needs a prepared real-time engine with one pending plan";
+        return false;
+    }
+    Pending p = std::move(pending_.front());
+    pending_.erase(pending_.begin());
+    applyPlan(p.plan, pos_);
+    appliedStrengthDb_ = static_cast<float>(p.plan.level.strengthDb);
+    appliedB_ = static_cast<float>(p.plan.mix.babbleFraction);
+    appliedCeilingDb_ = static_cast<float>(p.plan.level.limiterCeilingDbtp);
+    rtStrengthDb_.store(appliedStrengthDb_, std::memory_order_relaxed);
+    rtBabbleB_.store(appliedB_, std::memory_order_relaxed);
+    rtCeilingDb_.store(appliedCeilingDb_, std::memory_order_relaxed);
+    gainTarget_ = gainCur_;
+    gainStampPending_ = false;
+    return true;
+}
+
+void MaskEngine::rtPollInbox() noexcept {
+    const float sDb = rtStrengthDb_.load(std::memory_order_relaxed);
+    if (sDb != appliedStrengthDb_) {
+        appliedStrengthDb_ = sDb;
+        masterTarget_ = std::pow(10.0, static_cast<double>(sDb) / 20.0);
+    }
+    const float b = rtBabbleB_.load(std::memory_order_relaxed);
+    if (b != appliedB_) {
+        appliedB_ = b;
+        mixer_.setBabbleFraction(static_cast<double>(b));
+    }
+    const float ceil = rtCeilingDb_.load(std::memory_order_relaxed);
+    if (ceil != appliedCeilingDb_) {
+        appliedCeilingDb_ = ceil;
+        limiter_.setCeilingDb(static_cast<double>(ceil));
+    }
+    for (;;) {
+        if (!havePendingStamp_) {
+            if (!inbox_->pop(pendingStamp_)) break;
+            havePendingStamp_ = true;
+        }
+        if (pendingStamp_.effective > pos_) break;
+        const std::size_t n = std::min<std::size_t>(pendingStamp_.numChannels, gainTarget_.size());
+        for (std::size_t c = 0; c < n; ++c) gainTarget_[c] = static_cast<double>(pendingStamp_.gains[c]);
+        havePendingStamp_ = false;
+    }
+}
+
+double MaskEngine::zoneTargetFraction(int c) const noexcept {
+    const double b = rtBabbleFraction();
+    const auto z = static_cast<std::size_t>(zoneOf_[static_cast<std::size_t>(c)]);
+    return std::clamp(b + zoneOffset_[z], 0.0, 1.0);
+}
+
+bool MaskEngine::rtPlaceEvent(const TalkerEvent& e, float* gains, std::size_t n) {
+    if (!babble_ || !spatial_ || e.slot >= slotPlaced_.size()) return false;
+    for (std::size_t s = 0; s < slotPlaced_.size(); ++s) {
+        if (slotPlaced_[s] && slotEnd_[s] <= e.startSample) {
+            spatial_->releaseTalker(static_cast<int>(s));
+            slotPlaced_[s] = 0;
+        }
+    }
+    const GainVector g = spatial_->placeTalker(static_cast<int>(e.slot), static_cast<double>(e.length()) / 48000.0, -1);
+    slotPlaced_[e.slot] = 1;
+    slotUsed_[e.slot] = 1;
+    slotEnd_[e.slot] = e.endSample;
+    slotStart_[e.slot] = e.startSample;
+    for (std::size_t c = 0; c < n; ++c) gains[c] = c < g.size() ? g[c] : 0.0f;
+    return true;
+}
+
+void MaskEngine::rtUpdateMotion(std::int64_t babbleNow) {
+    if (!babble_ || !spatial_) return;
+    for (std::size_t s = 0; s < slotPlaced_.size(); ++s) {
+        if (!slotPlaced_[s]) continue;
+        if (slotEnd_[s] <= babbleNow) {
+            spatial_->releaseTalker(static_cast<int>(s));
+            slotPlaced_[s] = 0;
+            continue;
+        }
+        if (slotStart_[s] > babbleNow) continue;  // placed for an event that has not started yet
+        const GainVector g = spatial_->updateMotion(static_cast<int>(s), motionLen_);
+        babble_->setSlotGains(static_cast<std::uint32_t>(s), g.data(), g.size());
+    }
+}
+
+void MaskEngine::rtFeedForwardBalance() { feedForwardBalance(); }
+
+void MaskEngine::rtFlushGainStamp() {
+    if (!gainStampPending_ || !inbox_) return;
+    RtGainStamp st;
+    st.effective = ((rtPosition() + kStampDelay + kCell - 1) / kCell) * kCell;
+    st.numChannels = static_cast<std::uint32_t>(std::min<std::size_t>(gainStamped_.size(), st.gains.size()));
+    for (std::size_t c = 0; c < st.numChannels; ++c) st.gains[c] = static_cast<float>(gainStamped_[c]);
+    if (inbox_->push(st))
+        gainStampPending_ = false;
+    else
+        ++stampsDropped_;
+}
+
+void MaskEngine::rtCollectGarbage() {
+    stationary_.collectGarbage();
+    for (auto& conv : babbleConv_) conv->collectGarbage();
+}
+
+void MaskEngine::rtAnalyzeTap(int tap, std::int64_t start, const float* const* ch, int nCh, int n) {
+    if (!cfg_.realtime || n <= 0) return;
+    const auto N = static_cast<std::size_t>(std::min(nCh, nCh_));
+    auto sq = [](const float* x, std::size_t m) {
+        double e = 0.0;
+        for (std::size_t i = 0; i < m; ++i) e += static_cast<double>(x[i]) * x[i];
+        return e;
+    };
+    switch (tap) {
+    case 0: {  // T1: babble -> 5 s trim / balance blocks, babble spectrum, spectral correction
+        int off = 0;
+        while (off < n) {
+            const std::int64_t t = start + off;
+            int m = n - off;
+            if (nextBlock_ > t) m = static_cast<int>(std::min<std::int64_t>(m, nextBlock_ - t));
+            const auto um = static_cast<std::size_t>(m);
+            for (std::size_t c = 0; c < N; ++c) {
+                const double e1 = sq(ch[c] + off, um);
+                blockPowT1_[c] += e1;
+                sumT1_[c] += e1;
+                babbleInMix_ += zoneTargetFraction(static_cast<int>(c)) * e1;
+                anaPtr_[c] = ch[c] + off;
+            }
+            blockN_ += m;
+            if (babble_) babbleAnalyzer_.process(anaPtr_.data(), um);
+            off += m;
+            const std::int64_t now = t + m;
+            while (now >= nextBlock_) {
+                endOfBlock(now);
+                nextBlock_ += blockLen_;
+            }
+            for (const SpectrumBlock& b : babbleAnalyzer_.takeBlocks()) correctionStep(b, now);
+        }
+        if (babble_) babble_->consumeOccupancy();
+        rtFlushGainStamp();
+        break;
+    }
+    case 1: {  // T2: stationary spectrum
+        for (std::size_t c = 0; c < N; ++c) sumT2_[c] += sq(ch[c], static_cast<std::size_t>(n));
+        stationaryAnalyzer_.process(ch, static_cast<std::size_t>(n));
+        (void)stationaryAnalyzer_.takeBlocks();
+        break;
+    }
+    case 2: {  // T3: mix level, 10 ms envelope histogram, modulation / gaps
+        for (std::size_t c = 0; c < N; ++c) sumT3_[c] += sq(ch[c], static_cast<std::size_t>(n));
+        for (int i = 0; i < n; ++i) {
+            double e = 0.0;
+            for (std::size_t c = 0; c < N; ++c) e += static_cast<double>(ch[c][i]) * ch[c][i];
+            frameAcc_ += e / static_cast<double>(std::max<std::size_t>(N, 1));
+            if (++framePos_ == frameLen_) {
+                const double pw = frameAcc_ / static_cast<double>(frameLen_);
+                modulation_.pushFrame(pw);
+                const double db = powDb(pw);
+                const auto bin = static_cast<std::size_t>(
+                    std::clamp((db - kHistMinDb) / kHistStepDb, 0.0, static_cast<double>(kHistBins - 1)));
+                ++levelHist_[bin];
+                frameAcc_ = 0.0;
+                framePos_ = 0;
+            }
+        }
+        break;
+    }
+    case 3: {  // T4: output level and meters
+        for (std::size_t c = 0; c < N; ++c) sumT4_[c] += sq(ch[c], static_cast<std::size_t>(n));
+        meters_.process(ch, n);
+        anaSamples_ += n;
+        break;
+    }
+    default: break;
+    }
 }
 
 nlohmann::json toJson(const MaskStatistics& s) {

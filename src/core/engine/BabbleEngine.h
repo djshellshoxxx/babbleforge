@@ -12,6 +12,12 @@
 // feed-forward g_bnorm = 1/sqrt(F), F = planned E[k_speech] incl. level variation and fades
 // (TalkerPlanner::estimateBusPowerFactor). Optional slow trim (ENGINE.md §3.2 item 3),
 // computed offline from the rendered bus at a 5 s cadence (REALTIME §8.4).
+//
+// External-feed mode (cfg.externalFeed, the real-time host): render() only runs the RT voice
+// renderer; planning, event arming and source preparation are done by the host's planner and
+// preload threads through planner(), selector(), pool(), chain() and renderer(), and the
+// occupancy statistics are consumed by the analysis thread (consumeOccupancy()).
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -41,6 +47,7 @@ struct BabbleEngineConfig {
     double probeSeconds = 1800.0;      // planned-timeline probe for g_bnorm
     bool trimEnabled = false;
     bool retainLayouts = false;        // diagnostics: keep every event's layout in the planner
+    bool externalFeed = false;         // real-time host: see the header comment
 };
 
 struct BabbleEngineStats {
@@ -75,7 +82,23 @@ public:
     double trimDb() const noexcept { return trimDb_; }
     std::uint64_t underflows() const noexcept { return renderer_.underflows(); }
     std::uint64_t droppedEvents() const noexcept { return renderer_.droppedEvents(); }
-    bool sourceErrors() const noexcept { return sourceErrors_; }
+    bool sourceErrors() const noexcept { return sourceErrors_.load(std::memory_order_relaxed); }
+
+    // ---- external-feed mode (real-time host) ----
+    // Planner thread: planner / selector / renderer producer side; chains and the block pool are
+    // shared with the preload threads (the host serialises pool access).
+    TalkerPlanner& plannerMutable() noexcept { return *planner_; }
+    SegmentSelector& selectorMutable() noexcept { return *selector_; }
+    VoiceRenderer& renderer() noexcept { return renderer_; }
+    BlockPool& pool() noexcept { return *pool_; }
+    std::size_t numChains() const noexcept { return chainStore_.size(); }
+    BlockChain* chain(std::size_t i) noexcept { return chainStore_[i].get(); }
+    const BabbleEngineConfig& config() const noexcept { return cfg_; }
+    // Planner thread: re-plan now (external-feed mode); updates g_bnorm.
+    std::vector<std::uint64_t> applyReplanNow(const TalkerPlanParams& params, std::int64_t atSample);
+    void markSourceError() noexcept { sourceErrors_.store(true, std::memory_order_relaxed); }
+    // Analysis thread: pops the renderer's occupancy frames into stats().
+    void consumeOccupancy() noexcept;
 
 private:
     struct Inflight {
@@ -105,7 +128,8 @@ private:
     std::deque<Replan> replans_;
     std::int64_t pos_ = 0;
     double gbnorm_ = 1.0;
-    bool sourceErrors_ = false;
+    std::atomic<bool> sourceErrors_{false};
+    std::vector<float*> ptrs_;
     BabbleEngineStats stats_;
     // Offline slow trim state.
     double trimDb_ = 0.0, trimAcc_ = 0.0;

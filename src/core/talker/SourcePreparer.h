@@ -81,6 +81,11 @@ public:
     std::uint64_t written() const noexcept { return writeIndex_.load(std::memory_order_relaxed); }
     std::uint64_t length() const noexcept { return length_; }
     bool finished() const noexcept { return finished_.load(std::memory_order_acquire); }
+    // Reader side: samples published so far / whole event written.
+    std::uint64_t writtenAcquire() const noexcept { return writeIndex_.load(std::memory_order_acquire); }
+    bool complete() const noexcept { return writtenAcquire() >= length_; }
+    // Writer side: the reader's consumption point.
+    std::uint64_t readPosition() const noexcept { return readIndex_.load(std::memory_order_acquire); }
 
     // Reader side (RT). Copies [pos, pos + n); false if not yet written (underflow).
     bool read(const BlockPool& pool, std::uint64_t pos, float* dst, std::size_t n) const noexcept;

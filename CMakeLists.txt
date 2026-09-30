@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(BF_BUILD_TESTS "Build tests" ON)
 option(BF_BUILD_TOOLS "Build tools (bfrender)" ON)
 option(BF_BUILD_APP "JUCE app, later" OFF)
+option(BF_RT_CHECK "RT-check build: allocation hooks abort/count on RT threads in every executable" OFF)
 
 # Dependencies
 include(cmake/Dependencies.cmake)

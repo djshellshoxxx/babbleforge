@@ -70,3 +70,20 @@ target_sources(bfcore PRIVATE ${bf_spatial_sources})
 # strategy module (globbed)
 file(GLOB bf_strategy_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/strategy/*.cpp)
 target_sources(bfcore PRIVATE ${bf_strategy_sources})
+
+# real-time host (globbed): lock-free messaging, backends, threaded services, controller,
+# logging, diagnostics, persistence (docs/REALTIME_ARCHITECTURE.md, RELIABILITY.md)
+file(GLOB bf_rt_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/rt/*.cpp)
+target_sources(bfcore PRIVATE ${bf_rt_sources})
+find_package(Threads REQUIRED)
+target_link_libraries(bfcore PUBLIC Threads::Threads)
+
+# RT-check allocation hooks (global operator new/delete replacements, REALTIME §1.3). Linked
+# into the dedicated RT-check test binary always, and into every executable when BF_RT_CHECK=ON.
+add_library(bf_rtcheck_hooks OBJECT ${CMAKE_CURRENT_SOURCE_DIR}/rt/hooks/RtCheckHooks.cpp)
+target_include_directories(bf_rtcheck_hooks PRIVATE ${CMAKE_SOURCE_DIR}/src)
+bf_set_warnings(bf_rtcheck_hooks)
+if(BF_RT_CHECK)
+  target_compile_definitions(bfcore PUBLIC BF_RT_CHECK=1)
+  target_link_libraries(bfcore PUBLIC $<TARGET_OBJECTS:bf_rtcheck_hooks>)
+endif()

@@ -12,7 +12,11 @@ constexpr double kHalfPi = 1.57079632679489661923;
 constexpr std::size_t kMaxDrainPerSub = 32;
 }  // namespace
 
-void VoiceRenderer::prepare(std::size_t numChannels, std::size_t maxVoices, const BlockPool* pool, double fs) {
+void VoiceRenderer::prepare(std::size_t numChannels, std::size_t maxVoices, const BlockPool* pool, double fs,
+                            bool realtime) {
+    realtime_ = realtime;
+    readyMin_ = static_cast<std::int64_t>(std::llround(1.25 * fs));
+    feedback_ = std::make_unique<Spsc<VoiceFeedback, kFifoSize>>();
     nCh_ = std::clamp<std::size_t>(numChannels, 1, kMaxChannels);
     fs_ = fs;
     pool_ = pool;
@@ -43,6 +47,70 @@ void VoiceRenderer::prepare(std::size_t numChannels, std::size_t maxVoices, cons
 bool VoiceRenderer::pushEvent(const VoiceEvent& e) noexcept { return fifo_->push(e); }
 bool VoiceRenderer::popFinished(BlockChain*& chain) noexcept { return finished_->pop(chain); }
 bool VoiceRenderer::popOccupancy(OccupancyFrame& f) noexcept { return occ_->pop(f); }
+bool VoiceRenderer::popFeedback(VoiceFeedback& f) noexcept { return feedback_ && feedback_->pop(f); }
+
+void VoiceRenderer::feedback(VoiceFeedback::Kind k, const Voice& v, std::int64_t t) noexcept {
+    VoiceFeedback f;
+    f.kind = k;
+    f.slot = v.e.ev.slot;
+    f.recording = v.e.ev.recording;
+    f.eventId = v.e.ev.eventId;
+    f.sample = t;
+    if (!feedback_->push(f)) feedbackDropped_.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool VoiceRenderer::rtGate(Voice& v, std::uint32_t vi, std::int64_t t0, std::int64_t t1, bool& freed) noexcept {
+    TalkerEvent& ev = v.e.ev;
+    freed = false;
+    if (!v.started) {
+        const std::int64_t check = std::max(ev.startSample, v.nextCheck);
+        if (t1 <= check) return false;  // not due yet
+        BlockChain* ch = v.e.chain;
+        const std::int64_t len = ch ? static_cast<std::int64_t>(ch->length()) : 0;
+        const std::int64_t need = std::min(len, std::max(ev.fadeInLen + static_cast<std::int64_t>(fs_), readyMin_));
+        if (ch && (static_cast<std::int64_t>(ch->writtenAcquire()) >= need || ch->complete())) {
+            v.started = true;
+            feedback(VoiceFeedback::Started, v, t0);
+        } else {
+            if (v.postpones >= kMaxPostpones) {
+                starvations_.fetch_add(1, std::memory_order_relaxed);
+                feedback(VoiceFeedback::Starvation, v, t0);
+                freeVoice(vi);
+                freed = true;
+                return false;
+            }
+            if (v.postpones == 0) {
+                lateStarts_.fetch_add(1, std::memory_order_relaxed);
+                feedback(VoiceFeedback::LateStart, v, t0);
+            }
+            ++v.postpones;
+            ev.startSample += kPostponeStep;
+            ev.fadeOutStart += kPostponeStep;
+            ev.endSample += kPostponeStep;
+            v.nextCheck = std::max(check, t0) + kPostponeStep;
+            return false;
+        }
+    }
+    // Active: underflow imminent -> 20 ms fast fade-out (then the voice ends).
+    if (!v.fastFade && v.e.chain) {
+        const std::int64_t a = std::max(t0, ev.startSample);
+        const std::int64_t chainPos = a - ev.startSample - v.e.chainOffset;
+        const std::int64_t len = static_cast<std::int64_t>(v.e.chain->length());
+        const std::int64_t written = static_cast<std::int64_t>(v.e.chain->writtenAcquire());
+        const std::int64_t needed = std::min(len - chainPos, ev.endSample - a);
+        const std::int64_t avail = written - chainPos;
+        if (chainPos >= 0 && avail < needed && avail < kFastFade + (t1 - t0)) {
+            v.fastFade = true;
+            fastFades_.fetch_add(1, std::memory_order_relaxed);
+            if (ev.endSample > a + kFastFade) {
+                ev.fadeOutStart = a;
+                ev.endSample = a + kFastFade;
+            }
+            feedback(VoiceFeedback::Underflow, v, t0);
+        }
+    }
+    return true;
+}
 
 void VoiceRenderer::setCountNorm(double gLin, std::int64_t effectiveSample, bool immediate) noexcept {
     cmds_->push(Cmd{immediate ? CmdType::CountNormNow : CmdType::CountNorm, gLin, effectiveSample, 0});
@@ -154,7 +222,18 @@ void VoiceRenderer::drain() noexcept {
         v.e = e;
         v.speechIdx = 0;
         v.gainTarget = v.gain = static_cast<double>(e.ev.segGainLin);
-        computeTargets(v);
+        v.started = !realtime_;
+        v.fastFade = false;
+        v.postpones = 0;
+        v.nextCheck = e.ev.startSample;
+        if (e.hasGains) {
+            const std::uint32_t slot = e.ev.slot;
+            v.gainVer = slot < kMaxSlots ? (*slotGainVer_)[slot].load(std::memory_order_acquire) : 0;
+            v.chTarget.fill(0.0f);
+            for (std::size_t c = 0; c < nCh_; ++c) v.chTarget[c] = e.gains[c];
+        } else {
+            computeTargets(v);
+        }
         v.chGain = v.chTarget;
         auto it = std::lower_bound(order_.begin(), order_.end(), e.ev.eventId,
                                    [&](std::uint32_t vi, std::uint64_t id) { return voices_[vi].e.ev.eventId < id; });
@@ -193,6 +272,13 @@ void VoiceRenderer::renderSub(float* const* out, std::size_t offset, std::size_t
     while (k < order_.size()) {
         const std::uint32_t vi = order_[k];
         Voice& v = voices_[vi];
+        if (realtime_) {
+            bool freed = false;
+            if (!rtGate(v, vi, t0, t1, freed)) {
+                if (!freed) ++k;
+                continue;
+            }
+        }
         const TalkerEvent& ev = v.e.ev;
         const std::int64_t a = std::max(t0, ev.startSample), b = std::min(t1, ev.endSample);
         if (b > a) {

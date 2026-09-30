@@ -39,3 +39,13 @@ file(GLOB bf_spectrum_engine_sources CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/spectrum/*.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/engine/*.cpp)
 target_sources(bfcore PRIVATE ${bf_spectrum_engine_sources})
+
+# corpus / talker modules (globbed)
+file(GLOB bf_corpus_talker_sources CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/corpus/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/talker/*.cpp)
+target_sources(bfcore PRIVATE ${bf_corpus_talker_sources})
+
+# spatial modules (globbed)
+file(GLOB bf_spatial_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/spatial/*.cpp)
+target_sources(bfcore PRIVATE ${bf_spatial_sources})

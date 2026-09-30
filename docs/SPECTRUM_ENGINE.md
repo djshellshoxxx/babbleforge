@@ -19,7 +19,7 @@ Covers brief sections 18, 19, 21, 22, 23. Labels are defined in `ENGINE.md` §0.
 
 ### 2.1 Representation
 
-The canonical representation is **1/3-octave band levels** at IEC 61260 nominal centres from 50 Hz to 16 kHz (26 bands), in dB, shape-only (relative). Octave levels are derived by power-summing the three constituent 1/3-octave bands.
+The canonical representation is **1/3-octave band levels** (band *power*, not spectral density; every target and every slope in this document is expressed as band levels) at IEC 61260 nominal centres from 50 Hz to 16 kHz (26 bands), in dB, shape-only (relative). Octave levels are derived by power-summing the three constituent 1/3-octave bands.
 
 ```cpp
 struct SpectrumTarget {
@@ -47,8 +47,8 @@ All slope curves are anchored at 0 dB at 1 kHz and are flat below 200 Hz before 
 | **−5 dB/oct** | L(f) = −5·log2(f/1000) for f ≥ 200 Hz; L = L(200) below | [R: historical practice; not claimed optimal] |
 | **−7 dB/oct** | same with −7 | [R: recent office literature cites −7…−9] |
 | **−9 dB/oct** | same with −9 | same |
-| **Pink (reference)** | −3.01 dB/oct over the whole range (no flat section) | [S] |
-| **Flat speech band** | 0 dB from 100 Hz to 10 kHz (testing) | [I] |
+| **Pink (reference)** | 0 dB in every 1/3-octave band (equal power per band = −3.01 dB/oct spectral density) | [S] |
+| **White (flat density)** | Band levels +10·log10(f/1000) dB (+3.01 dB/oct), testing only | [I] |
 | **Custom** | 7 octave points (125…8k) ±12 dB (UI recommends ±6), PCHIP-interpolated to 1/3-octave in log-frequency; or a full 26-band table from a file | GUI §31 |
 
 **Provisional Universal LTASS shape (relative to the 500 Hz band).** This is an engineering transcription placeholder: **must be replaced by the exact Byrne et al. 1994 table values before release** (Open Research Question 18). The implementation loads it from the data file, so replacing it needs no code change.

@@ -49,3 +49,7 @@ target_sources(bfcore PRIVATE ${bf_corpus_talker_sources})
 # spatial modules (globbed)
 file(GLOB bf_spatial_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/spatial/*.cpp)
 target_sources(bfcore PRIVATE ${bf_spatial_sources})
+
+# strategy module (globbed)
+file(GLOB bf_strategy_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/strategy/*.cpp)
+target_sources(bfcore PRIVATE ${bf_strategy_sources})

@@ -30,11 +30,6 @@ void assign(T& dst, const std::optional<T>& src) {
 
 }  // namespace
 
-void applyMacrosStep4_NotImplemented(const DataSet&, EffectiveConfig&) {
-  // PRESETS.md §2 step 4 (Voice Amount -> Character -> Clear Voice Reduction) is intentionally
-  // left for the macro implementation. Intentionally a no-op.
-}
-
 ComposeResult compose(const DataSet& ds, const Preset& p) {
   ComposeResult r;
   auto ai = ds.areas.find(p.area);
@@ -86,10 +81,15 @@ ComposeResult compose(const DataSet& ds, const Preset& p) {
   c.strategyId = strat.id;
   c.strategyClass = strat.klass;
   assign(c.babbleFraction, strat.overrides.babbleFraction);
+  if (strat.overrides.babbleFractionDelta && !strat.overrides.babbleFraction)
+    c.babbleFraction += *strat.overrides.babbleFractionDelta;
+  if (strat.forced.babbleFractionRange)
+    c.babbleFraction = std::clamp(c.babbleFraction, strat.forced.babbleFractionRange->first,
+                                  strat.forced.babbleFractionRange->second);
   assign(c.character, strat.overrides.character);
 
-  // Step 4: macros (not implemented here).
-  applyMacrosStep4_NotImplemented(ds, c);
+  // Step 4 (macros) is applied by MaskStrategy::buildPlan (core/strategy), which consumes the
+  // macro VALUES resolved here; see bf::composePlan() for the full pipeline.
 
   // Step 5: user (preset) non-null fields.
   assign(c.strengthDb, p.macros.strengthDb);
@@ -145,6 +145,7 @@ ComposeResult compose(const DataSet& ds, const Preset& p) {
   assign(c.limiterEnabled, p.outputs.limiterEnabled);
   assign(c.limiterCeilingDbtp, p.outputs.limiterCeilingDbtp);
   assign(c.fallbackPolicy, p.fallbackPolicy);
+  if (strat.forced.fallbackPolicy) c.fallbackPolicy = *strat.forced.fallbackPolicy;
   c.seed = p.seed;
   c.deterministic = p.deterministic;
 

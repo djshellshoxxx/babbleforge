@@ -4,7 +4,21 @@
   "class": "LaboratoryMask",
   "displayName": "Research",
   "descriptionSimple": "Controlled laboratory/reference masking scenario.",
-  "overrides": {},
-  "forced": {},
+  "overrides": {
+    "babbleFraction": 1.0,
+    "segmentDurationMedianS": 8.0,
+    "segmentDurationSigmaLn": 0.4,
+    "continuousNOverlapMs": 20,
+    "continuousNMaxGapMs": 100,
+    "continuousNDefault": 4
+  },
+  "forced": {
+    "fallbackPolicy": "strict",
+    "mixUserLocked": true,
+    "cvrDisabledUnlessExplicit": true,
+    "seedRequired": true,
+    "poolRotation": false,
+    "lockedForResearch": true
+  },
   "evidenceLabel": "engineering-default-requires-validation"
 }

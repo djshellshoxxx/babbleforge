@@ -14,6 +14,13 @@ struct DataSet {
   std::vector<CharacterAnchor> characterAnchors;
   std::vector<CvrMapping> cvrMappings;
   std::vector<VoiceAmountAnchor> voiceAmountAnchors;
+  // Macro interpolation metadata (see resources/data/macros/*.json).
+  std::map<std::string, std::string> characterInterp;  // parameter -> linear|log|step
+  std::vector<double> characterStepThresholds;
+  double levelVarTruncationSigma = 2.0;
+  std::map<std::string, std::string> cvrInterp;
+  std::vector<double> cvrStepThresholds;
+  VoiceAmountRules voiceAmountRules;
   std::map<std::string, SpectrumTargetDef> targets;
   EngineDefaults engineDefaults;
   // Lower-case hex SHA-256 over all files under the data dir, sorted by generic relative

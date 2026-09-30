@@ -86,6 +86,26 @@ AreaModel parseArea(const json& j) {
   return a;
 }
 
+std::optional<std::pair<double, double>> getRange(const json& o, const char* key, const std::string& path) {
+  auto r = getVec<double>(o, key, path);
+  if (r.empty()) return std::nullopt;
+  if (r.size() != 2) throw ParseError(join(path, key) + ": expected 2 elements");
+  if (r[0] > r[1]) throw ParseError(join(path, key) + ": lower bound exceeds upper bound");
+  return std::make_pair(r[0], r[1]);
+}
+
+std::map<std::string, std::string> getInterpMap(const json& o, const char* key) {
+  std::map<std::string, std::string> m;
+  if (const json* im = getObj(o, key, ""))
+    for (auto it = im->begin(); it != im->end(); ++it) {
+      std::string v = conv<std::string>(it.value(), std::string(key) + "." + it.key());
+      if (v != "linear" && v != "log" && v != "step")
+        throw ParseError(std::string(key) + "." + it.key() + ": expected linear|log|step");
+      m[it.key()] = v;
+    }
+  return m;
+}
+
 StrategyDef parseStrategy(const json& j) {
   StrategyDef s;
   s.id = getReq<std::string>(j, "id", "");
@@ -94,15 +114,36 @@ StrategyDef parseStrategy(const json& j) {
   s.descriptionSimple = getDef<std::string>(j, "descriptionSimple", "", "");
   s.evidenceLabel = getDef<std::string>(j, "evidenceLabel", "", "");
   if (const json* o = getObj(j, "overrides", "")) {
-    s.overrides.babbleFraction = getOpt<double>(*o, "babbleFraction", "overrides");
-    s.overrides.character = getOpt<double>(*o, "character", "overrides");
+    auto& ov = s.overrides;
+    const std::string P = "overrides";
+    ov.babbleFraction = getOpt<double>(*o, "babbleFraction", P);
+    ov.character = getOpt<double>(*o, "character", P);
+    ov.babbleFractionDelta = getOpt<double>(*o, "babbleFractionDelta", P);
+    ov.characterDefault = getOpt<double>(*o, "characterDefault", P);
+    ov.motionScale = getOpt<double>(*o, "motionScale", P);
+    ov.multiVoiceK = getOpt<int>(*o, "multiVoiceK", P);
+    ov.segmentDurationMedianS = getOpt<double>(*o, "segmentDurationMedianS", P);
+    ov.segmentDurationSigmaLn = getOpt<double>(*o, "segmentDurationSigmaLn", P);
+    ov.handoverOverlapMs = getOpt<double>(*o, "handoverOverlapMs", P);
+    ov.continuousNOverlapMs = getOpt<double>(*o, "continuousNOverlapMs", P);
+    ov.continuousNMaxGapMs = getOpt<double>(*o, "continuousNMaxGapMs", P);
+    ov.continuousNDefault = getOpt<int>(*o, "continuousNDefault", P);
   }
   if (const json* f = getObj(j, "forced", "")) {
-    auto r = getVec<double>(*f, "characterRange", "forced");
-    if (!r.empty()) {
-      if (r.size() != 2) throw ParseError("forced.characterRange: expected 2 elements");
-      s.forced.characterRange = std::make_pair(r[0], r[1]);
-    }
+    auto& fo = s.forced;
+    const std::string P = "forced";
+    fo.characterRange = getRange(*f, "characterRange", P);
+    fo.babbleFractionRange = getRange(*f, "babbleFractionRange", P);
+    fo.motionRange = getRange(*f, "motionRange", P);
+    fo.stationaryFractionRange = getRange(*f, "stationaryFractionRange", P);
+    fo.multiVoiceKRange = getRange(*f, "multiVoiceKRange", P);
+    fo.multiVoiceKOptions = getVec<int>(*f, "multiVoiceKOptions", P);
+    fo.fallbackPolicy = getOpt<std::string>(*f, "fallbackPolicy", P);
+    fo.mixUserLocked = getDef<bool>(*f, "mixUserLocked", P, false);
+    fo.cvrDisabledUnlessExplicit = getDef<bool>(*f, "cvrDisabledUnlessExplicit", P, false);
+    fo.seedRequired = getDef<bool>(*f, "seedRequired", P, false);
+    fo.poolRotation = getDef<bool>(*f, "poolRotation", P, true);
+    fo.lockedForResearch = getDef<bool>(*f, "lockedForResearch", P, false);
   }
   return s;
 }
@@ -218,10 +259,18 @@ DataSetResult loadDataSet(const fs::path& dir) {
       a.spatialMotionRate = getReq<double>(e, "spatialMotionRate", "anchors");
       a.fadeInMs = getReq<double>(e, "fadeInMs", "anchors");
       a.fadeOutMs = getReq<double>(e, "fadeOutMs", "anchors");
-      a.interp = getDef<std::string>(e, "interp", "anchors", "linear");
+      const json* mn = getObj(e, "minActive", "anchors");
+      const json* mx = getObj(e, "maxActive", "anchors");
+      if (!mn || !mx) throw ParseError("anchors: minActive/maxActive formula objects required");
+      a.minActiveFloor = getReq<double>(*mn, "floor", "anchors.minActive");
+      a.minActiveFactor = getReq<double>(*mn, "factor", "anchors.minActive");
+      a.maxActiveFactor = getReq<double>(*mx, "factor", "anchors.maxActive");
       r.data.characterAnchors.push_back(a);
     }
     if (r.data.characterAnchors.empty()) throw ParseError("anchors: empty");
+    r.data.characterInterp = getInterpMap(anchorsDoc, "interpolation");
+    r.data.characterStepThresholds = getVec<double>(anchorsDoc, "stepThresholds", "");
+    r.data.levelVarTruncationSigma = getDef<double>(anchorsDoc, "levelVarTruncationSigma", "", 2.0);
 
     current = dir / "macros" / "cvr_mapping.json";
     {
@@ -242,6 +291,8 @@ DataSetResult loadDataSet(const fs::path& dir) {
           r.data.cvrMappings.push_back(m);
         }
       if (r.data.cvrMappings.empty()) throw ParseError("mappings: empty");
+      r.data.cvrInterp = getInterpMap(j, "interpolation");
+      r.data.cvrStepThresholds = getVec<double>(j, "stepThresholds", "");
     }
 
     current = dir / "macros" / "voice_amount.json";
@@ -258,6 +309,17 @@ DataSetResult loadDataSet(const fs::path& dir) {
           r.data.voiceAmountAnchors.push_back(a);
         }
       if (r.data.voiceAmountAnchors.empty()) throw ParseError("anchors: empty");
+      auto& vr = r.data.voiceAmountRules;
+      vr.interp = getDef<std::string>(j, "interp", "", vr.interp);
+      if (auto rg = getRange(j, "meanActiveRange", "")) {
+        vr.meanMin = rg->first;
+        vr.meanMax = rg->second;
+      }
+      vr.availableSpeakerMargin = getDef<int>(j, "availableSpeakerMargin", "", vr.availableSpeakerMargin);
+      if (const json* pl = getObj(j, "pool", "")) {
+        vr.poolFactor = getDef<double>(*pl, "factor", "pool", vr.poolFactor);
+        vr.poolOffset = getDef<double>(*pl, "offset", "pool", vr.poolOffset);
+      }
     }
 
     if (r.data.areas.empty()) throw ParseError("no areas found");

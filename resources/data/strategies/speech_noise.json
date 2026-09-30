@@ -7,6 +7,11 @@
   "overrides": {
     "babbleFraction": 0.0
   },
-  "forced": {},
+  "forced": {
+    "babbleFractionRange": [
+      0.0,
+      0.0
+    ]
+  },
   "evidenceLabel": "engineering-default-requires-validation"
 }

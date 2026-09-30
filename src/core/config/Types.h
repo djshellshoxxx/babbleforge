@@ -58,22 +58,45 @@ struct AreaModel {
 
 struct StrategyDef {
   std::string id, klass, displayName, descriptionSimple, evidenceLabel;
+  // Relative/absolute overrides applied on top of the Area model (PRESETS.md §5).
   struct Overrides {
-    std::optional<double> babbleFraction;
-    std::optional<double> character;
+    std::optional<double> babbleFraction;       // absolute b (replaces the area value)
+    std::optional<double> character;            // absolute character (compose() step 3)
+    std::optional<double> babbleFractionDelta;  // b = area b + delta
+    std::optional<double> characterDefault;     // strategy default Character (plan building)
+    std::optional<double> motionScale;          // spatial motion multiplier
+    std::optional<int> multiVoiceK;             // MultiVoice default K
+    std::optional<double> segmentDurationMedianS, segmentDurationSigmaLn, handoverOverlapMs;
+    std::optional<double> continuousNOverlapMs, continuousNMaxGapMs;
+    std::optional<int> continuousNDefault;
   } overrides;
+  // Forced ranges / policies.
   struct Forced {
     std::optional<std::pair<double, double>> characterRange;
+    std::optional<std::pair<double, double>> babbleFractionRange;
+    std::optional<std::pair<double, double>> motionRange;
+    std::optional<std::pair<double, double>> stationaryFractionRange;
+    std::optional<std::pair<double, double>> multiVoiceKRange;
+    std::vector<int> multiVoiceKOptions;
+    std::optional<std::string> fallbackPolicy;
+    bool mixUserLocked = false;
+    bool cvrDisabledUnlessExplicit = false;
+    bool seedRequired = false;
+    bool poolRotation = true;
+    bool lockedForResearch = false;
   } forced;
 };
 
+// Character macro anchors (MASK_STRATEGIES.md §5.1). Interpolation mode per parameter is
+// held in DataSet::characterInterp.
 struct CharacterAnchor {
   double c = 0;
   std::string label;
   double meanActiveFactor = 1, maxInternalGapMs = 0, segmentDurationMedianS = 0, segmentDurationSigmaLn = 0,
          perSegmentLevelSigmaDb = 0, reEntryCooldownS = 0, overlapOnHandoverMs = 0,
          stationaryFractionOffset = 0, spatialMotionRate = 0, fadeInMs = 0, fadeOutMs = 0;
-  std::string interp;
+  // min = max(minActiveFloor, round(minActiveFactor * m)); max = round(maxActiveFactor * m).
+  double minActiveFloor = 0, minActiveFactor = 0, maxActiveFactor = 0;
 };
 
 struct CvrMapping {
@@ -81,7 +104,7 @@ struct CvrMapping {
   std::string label;
   double minActiveFloor = 0, dominanceCapDb = 0, levelSigmaMultiplier = 1, forcedOverlapAtHandoverMs = 0,
          onsetMaskingWindowMs = 0, segmentSelectionWeightForSoloRisk = 0, minimumStationaryFraction = 0,
-         maxPhraseContinuityS = 0;  // -1 means "unlimited"/unset in the data files
+         maxPhraseContinuityS = 0;  // -1 means "off / no rule" in the data files
 };
 
 struct VoiceAmountAnchor {
@@ -90,6 +113,13 @@ struct VoiceAmountAnchor {
   std::optional<double> meanActiveTalkers;  // nullopt: taken from the Area
   bool fromArea = false;
   std::string interp;
+};
+
+struct VoiceAmountRules {
+  std::string interp = "log";
+  double meanMin = 1.0, meanMax = 32.0;
+  int availableSpeakerMargin = 2;
+  double poolFactor = 1.8, poolOffset = 2.0;  // pool = max(ceil(factor*m) + offset, area pool)
 };
 
 struct SpectrumTargetDef {

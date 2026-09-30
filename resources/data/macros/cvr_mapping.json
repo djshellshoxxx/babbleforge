@@ -1,5 +1,18 @@
 {
-  "schema": "babbleforge.macros.cvrmapping/1",
+  "schema": "babbleforge.macros.cvrmapping/2",
+  "source": "docs/MASK_STRATEGIES.md §6.2",
+  "notes": "-1 means 'off / no rule'. Step parameters take the value of mapping i where i = number of stepThresholds <= r. A log curve whose lower anchor is off stays off below the first step threshold and takes the upper anchor value above it.",
+  "interpolation": {
+    "minActiveFloor": "step",
+    "dominanceCapDb": "linear",
+    "levelSigmaMultiplier": "linear",
+    "forcedOverlapAtHandoverMs": "linear",
+    "onsetMaskingWindowMs": "step",
+    "segmentSelectionWeightForSoloRisk": "linear",
+    "minimumStationaryFraction": "linear",
+    "maxPhraseContinuityS": "log"
+  },
+  "stepThresholds": [0.33, 0.66],
   "mappings": [
     {
       "r": 0.0,

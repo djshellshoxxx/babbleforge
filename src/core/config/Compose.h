@@ -61,11 +61,12 @@ struct ComposeResult {
   std::vector<Adjustment> adjustments;
 };
 
-// Step 4 (macros: Voice Amount -> Character -> Clear Voice Reduction, MASK_STRATEGIES.md
-// §5, §6, §9) is NOT implemented yet. compose() calls this hook between the strategy
-// and user-override steps; it currently does nothing.
-void applyMacrosStep4_NotImplemented(const DataSet& ds, EffectiveConfig& cfg);
-
+// compose() resolves PRESETS.md §2 steps 1-3, 5 and 6 into plain values. It does NOT apply
+// step 4 (macros: Voice Amount -> Character -> Clear Voice Reduction, MASK_STRATEGIES.md
+// §5, §6, §9): `character`, `voiceAmount`, `clearVoiceReduction` are the resolved macro
+// VALUES and talker counts are the pre-macro Area/user values. The final, macro-applied
+// parameters are produced by MaskStrategy::buildPlan(); bf::composePlan()
+// (core/strategy/PlanComposer.h) runs compose + validate + buildPlan end to end.
 ComposeResult compose(const DataSet& ds, const Preset& preset);
 
 }  // namespace bf

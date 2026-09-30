@@ -1,0 +1,41 @@
+{
+  "schema": "babbleforge.macros.cvrmapping/1",
+  "mappings": [
+    {
+      "r": 0.0,
+      "label": "Low",
+      "minActiveFloor": 1,
+      "dominanceCapDb": 6.0,
+      "levelSigmaMultiplier": 1.0,
+      "forcedOverlapAtHandoverMs": 0,
+      "onsetMaskingWindowMs": -1,
+      "segmentSelectionWeightForSoloRisk": 1.0,
+      "minimumStationaryFraction": 0.0,
+      "maxPhraseContinuityS": -1
+    },
+    {
+      "r": 0.5,
+      "label": "Medium",
+      "minActiveFloor": 2,
+      "dominanceCapDb": 4.0,
+      "levelSigmaMultiplier": 0.8,
+      "forcedOverlapAtHandoverMs": 150,
+      "onsetMaskingWindowMs": 300,
+      "segmentSelectionWeightForSoloRisk": 0.6,
+      "minimumStationaryFraction": 0.05,
+      "maxPhraseContinuityS": 10.0
+    },
+    {
+      "r": 1.0,
+      "label": "High",
+      "minActiveFloor": 3,
+      "dominanceCapDb": 2.5,
+      "levelSigmaMultiplier": 0.6,
+      "forcedOverlapAtHandoverMs": 400,
+      "onsetMaskingWindowMs": 100,
+      "segmentSelectionWeightForSoloRisk": 0.3,
+      "minimumStationaryFraction": 0.1,
+      "maxPhraseContinuityS": 6.0
+    }
+  ]
+}

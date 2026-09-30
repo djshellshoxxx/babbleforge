@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, claude/** ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        compiler:
+          - { os: ubuntu-latest, cc: gcc, cxx: g++ }
+          - { os: ubuntu-latest, cc: clang, cxx: clang++ }
+          - { os: windows-latest, cc: msvc, cxx: msvc }
+
+        exclude:
+          - os: windows-latest
+            compiler: { os: ubuntu-latest, cc: gcc, cxx: g++ }
+          - os: windows-latest
+            compiler: { os: ubuntu-latest, cc: clang, cxx: clang++ }
+          - os: ubuntu-latest
+            compiler: { os: windows-latest, cc: msvc, cxx: msvc }
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup MSVC
+      if: matrix.compiler.cc == 'msvc'
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Configure
+      shell: bash
+      run: |
+        cmake -S . -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} \
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}
+
+    - name: Build
+      shell: bash
+      run: cmake --build build
+
+    - name: Test
+      shell: bash
+      run: ctest --test-dir build --output-on-failure

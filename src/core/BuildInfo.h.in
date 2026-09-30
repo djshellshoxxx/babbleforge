@@ -1,0 +1,3 @@
+#pragma once
+
+#define BF_VERSION_STRING "@PROJECT_VERSION@"

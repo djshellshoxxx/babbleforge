@@ -1,0 +1,15 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "balanced",
+  "class": "HybridMask",
+  "displayName": "Balanced",
+  "descriptionSimple": "General-purpose speech masking with a mix of voices and stable background masking.",
+  "overrides": {},
+  "forced": {
+    "characterRange": [
+      0.0,
+      1.0
+    ]
+  },
+  "evidenceLabel": "engineering-default-requires-validation"
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "dense",
+  "class": "BabbleMask",
+  "displayName": "Dense",
+  "descriptionSimple": "High-density masking with minimal gaps.",
+  "overrides": {},
+  "forced": {
+    "characterRange": [
+      0.75,
+      1.0
+    ]
+  },
+  "evidenceLabel": "engineering-default-requires-validation"
+}

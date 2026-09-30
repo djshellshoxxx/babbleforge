@@ -1,0 +1,12 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "speech_noise",
+  "class": "StationarySpeechMask",
+  "displayName": "Speech-Shaped Stationary",
+  "descriptionSimple": "Stationary speech-shaped noise reference.",
+  "overrides": {
+    "babbleFraction": 0.0
+  },
+  "forced": {},
+  "evidenceLabel": "engineering-default-requires-validation"
+}

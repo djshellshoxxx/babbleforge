@@ -1,0 +1,48 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "reception",
+  "displayName": "Reception",
+  "description": "Reception area",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 7.0,
+    "pool": 20,
+    "minActive": 3,
+    "maxActive": 10,
+    "recommendedRange": [
+      5,
+      10
+    ]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.2
+  },
+  "macros": {
+    "character": 0.35,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": 0.0,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "auto",
+    "spread": 0.7,
+    "motion": 0.6,
+    "speakerVariation": "medium",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 2,
+    "minWithoutAdvisory": 2
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": []
+}

@@ -1,0 +1,10 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "research",
+  "class": "LaboratoryMask",
+  "displayName": "Research",
+  "descriptionSimple": "Controlled laboratory/reference masking scenario.",
+  "overrides": {},
+  "forced": {},
+  "evidenceLabel": "engineering-default-requires-validation"
+}

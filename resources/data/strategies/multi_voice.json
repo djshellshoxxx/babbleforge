@@ -1,0 +1,12 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "multi_voice",
+  "class": "MultiVoiceMask",
+  "displayName": "Multi-Voice",
+  "descriptionSimple": "Fixed number of continuously speaking voices.",
+  "overrides": {
+    "babbleFraction": 1.0
+  },
+  "forced": {},
+  "evidenceLabel": "engineering-default-requires-validation"
+}

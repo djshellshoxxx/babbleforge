@@ -1,0 +1,50 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "conference",
+  "displayName": "Conference",
+  "description": "Conference room",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 6.5,
+    "pool": 14,
+    "minActive": 4,
+    "maxActive": 9,
+    "recommendedRange": [5, 8]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.35
+  },
+  "macros": {
+    "character": 0.55,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": -1.5,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "auto",
+    "spread": 0.7,
+    "motion": 0.3,
+    "speakerVariation": "high",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 4,
+    "minWithoutAdvisory": 2
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": [
+    {
+      "when": "outputs < 4",
+      "text": "Room corners or ceiling mounted speakers recommended for even coverage."
+    }
+  ]
+}

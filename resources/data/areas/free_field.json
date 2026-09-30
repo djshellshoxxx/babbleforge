@@ -1,0 +1,49 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "free_field",
+  "displayName": "Free Field",
+  "description": "Outdoor free field",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 12.0,
+    "pool": 32,
+    "minActive": 9,
+    "maxActive": 15,
+    "recommendedRange": [
+      10,
+      20
+    ]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.4
+  },
+  "macros": {
+    "character": 0.7,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": 0.0,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "distributed",
+    "spread": 1.0,
+    "motion": 0.3,
+    "speakerVariation": "high",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 6,
+    "minWithoutAdvisory": 4
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": [],
+  "notes": "Grid layout recommended for outdoor deployment"
+}

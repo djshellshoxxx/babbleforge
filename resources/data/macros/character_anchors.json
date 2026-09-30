@@ -1,0 +1,53 @@
+{
+  "schema": "babbleforge.macros.characteranchors/1",
+  "anchors": [
+    {
+      "c": 0.0,
+      "label": "Natural",
+      "meanActiveFactor": 0.7,
+      "maxInternalGapMs": 600,
+      "segmentDurationMedianS": 7.0,
+      "segmentDurationSigmaLn": 0.55,
+      "perSegmentLevelSigmaDb": 3.0,
+      "reEntryCooldownS": 1.5,
+      "overlapOnHandoverMs": 0,
+      "stationaryFractionOffset": -0.1,
+      "spatialMotionRate": 1.0,
+      "fadeInMs": 250,
+      "fadeOutMs": 400,
+      "interp": "linear"
+    },
+    {
+      "c": 0.5,
+      "label": "Balanced",
+      "meanActiveFactor": 1.0,
+      "maxInternalGapMs": 250,
+      "segmentDurationMedianS": 5.5,
+      "segmentDurationSigmaLn": 0.45,
+      "perSegmentLevelSigmaDb": 2.0,
+      "reEntryCooldownS": 0.8,
+      "overlapOnHandoverMs": 150,
+      "stationaryFractionOffset": 0.0,
+      "spatialMotionRate": 0.6,
+      "fadeInMs": 150,
+      "fadeOutMs": 250,
+      "interp": "linear"
+    },
+    {
+      "c": 1.0,
+      "label": "Dense",
+      "meanActiveFactor": 1.45,
+      "maxInternalGapMs": 100,
+      "segmentDurationMedianS": 4.5,
+      "segmentDurationSigmaLn": 0.35,
+      "perSegmentLevelSigmaDb": 1.0,
+      "reEntryCooldownS": 0.3,
+      "overlapOnHandoverMs": 400,
+      "stationaryFractionOffset": 0.15,
+      "spatialMotionRate": 0.3,
+      "fadeInMs": 80,
+      "fadeOutMs": 150,
+      "interp": "linear"
+    }
+  ]
+}

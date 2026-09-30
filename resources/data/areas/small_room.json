@@ -1,0 +1,50 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "small_room",
+  "displayName": "Small Room",
+  "description": "Private office, small meeting room, 2–6 occupants",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 4.5,
+    "pool": 10,
+    "minActive": 3,
+    "maxActive": 6,
+    "recommendedRange": [3, 6]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.30
+  },
+  "macros": {
+    "character": 0.45,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "medium"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": -3.0,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "auto",
+    "spread": 0.5,
+    "motion": 0.3,
+    "speakerVariation": "medium",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 2,
+    "minWithoutAdvisory": 1
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": [
+    {
+      "when": "outputs < 2",
+      "text": "A single speaker makes the masker easy to localize. Two or more are recommended."
+    }
+  ]
+}

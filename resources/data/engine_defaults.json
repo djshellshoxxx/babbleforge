@@ -1,0 +1,40 @@
+{
+  "schema": "babbleforge.enginedefaults/1",
+  "lRefDbfs": -26.0,
+  "strength": {
+    "simple": {
+      "minDb": -18.0,
+      "maxDb": 9.0,
+      "labels": {
+        "Gentle": -12.0,
+        "Low": -6.0,
+        "Normal": 0.0,
+        "Strong": 5.0,
+        "VeryStrong": 9.0
+      }
+    },
+    "advanced": {
+      "minDb": -40.0,
+      "maxDb": 12.0
+    }
+  },
+  "limiter": {
+    "ceilingDbtp": -1.0
+  },
+  "fallbackPolicy": "continuous",
+  "correctionSpeeds": {
+    "slow": {
+      "timeConstantS": 300
+    },
+    "normal": {
+      "timeConstantS": 120
+    },
+    "fast": {
+      "timeConstantS": 45
+    }
+  },
+  "spectrum": {
+    "maxCorrectionDb": 6.0,
+    "lfLimitHz": 80
+  }
+}

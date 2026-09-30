@@ -121,6 +121,7 @@ std::shared_ptr<const CorpusSnapshot> CorpusSnapshot::build(std::string corpusVe
             const std::int64_t a = regs[i].start;
             if (in.length - a < kMinRemaining) continue;
             if (spanSpeech(rs, a, a + kWindow3s) < static_cast<double>(kMinSpeechIn3s)) continue;
+            if (std::binary_search(in.excludedAnchors.begin(), in.excludedAnchors.end(), a)) continue;
 
             SegmentRec seg;
             seg.recording = rid;
@@ -147,6 +148,11 @@ std::shared_ptr<const CorpusSnapshot> CorpusSnapshot::build(std::string corpusVe
                 seg.aslDb = static_cast<float>(10.0 * std::log10(eSum / eLen));
             else
                 seg.aslDb = rec.aslDb;
+            {
+                const auto it = std::lower_bound(in.anchorAsl.begin(), in.anchorAsl.end(), a,
+                                                 [](const auto& p, std::int64_t v) { return p.first < v; });
+                if (it != in.anchorAsl.end() && it->first == a) seg.aslDb = it->second;
+            }
             if (seg.speechFrac > 0.9f && seg.longestPhraseS > 4.0f) seg.flags |= kSegSoloRisk;
             snap->segments_.push_back(seg);
         }

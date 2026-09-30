@@ -46,6 +46,23 @@ file(GLOB bf_corpus_talker_sources CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/talker/*.cpp)
 target_sources(bfcore PRIVATE ${bf_corpus_talker_sources})
 
+# corpus ingestion (decode/resample/VAD/features), FLAC cache; SQLite-backed DB/import/loader
+file(GLOB bf_corpus_ingest_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/corpus/ingest/*.cpp)
+target_sources(bfcore PRIVATE ${bf_corpus_ingest_sources})
+target_link_libraries(bfcore PUBLIC FLAC::FLAC bf_r8brain bf_fvad)
+if(BF_WITH_CORPUS_DB)
+  target_link_libraries(bfcore PUBLIC bf_sqlite)
+  target_compile_definitions(bfcore PUBLIC BF_WITH_CORPUS_DB=1)
+else()
+  set(_bf_db_sources
+    ${CMAKE_CURRENT_SOURCE_DIR}/corpus/CorpusDb.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/corpus/CorpusImporter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/corpus/CorpusLoader.cpp)
+  get_target_property(_bf_all_src bfcore SOURCES)
+  list(REMOVE_ITEM _bf_all_src ${_bf_db_sources})
+  set_property(TARGET bfcore PROPERTY SOURCES "${_bf_all_src}")
+endif()
+
 # spatial modules (globbed)
 file(GLOB bf_spatial_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/spatial/*.cpp)
 target_sources(bfcore PRIVATE ${bf_spatial_sources})

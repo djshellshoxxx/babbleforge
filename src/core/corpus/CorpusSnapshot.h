@@ -13,6 +13,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bf {
@@ -97,6 +98,10 @@ struct RecordingInput {
     std::vector<double> speechEnergy;   // optional: sum of squares per region (exact ASL)
     float aslDb = -26.0f;               // used when speechEnergy is empty
     float quality = 1.0f;
+    // Optional overrides from a stored segment table (sorted by anchor): per-anchor ASL of the
+    // next 10 s (replaces the region-energy estimate) and anchors to leave out (excluded).
+    std::vector<std::pair<std::int64_t, float>> anchorAsl;
+    std::vector<std::int64_t> excludedAnchors;
 };
 
 class CorpusSnapshot {

@@ -1,0 +1,91 @@
+{
+  "schema": "babbleforge.preset",
+  "schemaVersion": "1.0",
+  "name": "Server Room Privacy",
+  "basedOn": { "area": "open_office", "strategy": "hybrid", "factoryPresetVersion": "1.0.0" },
+  "created": "2026-09-30T14:02:11Z",
+  "appVersion": "1.0.0",
+  "notes": "Hybrid 50/50 for comparison test B",
+
+  "area": "open_office",
+  "strategy": "hybrid",
+
+  "macros": {
+    "strengthDb": 0.0,
+    "character": 0.65,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high",
+    "mix": { "babbleFraction": 0.50 }
+  },
+
+  "talkers": {
+    "pool": 20,
+    "meanActive": 8.5,
+    "minActive": 6,
+    "maxActive": 11,
+    "segmentMinS": 2.0,
+    "segmentMaxS": 15.0,
+    "segmentMedianS": null,
+    "maxInternalGapMs": null,
+    "gainVariationDb": null,
+    "fadeInMs": null,
+    "fadeOutMs": null,
+    "reEntryCooldownS": null,
+    "segmentCooldownMin": 45,
+    "poolRotationMin": 20,
+    "languageAware": false,
+    "targetVoiceProfile": null,
+    "multiVoiceK": null
+  },
+
+  "stationary": {
+    "enabled": true,
+    "spectrum": "ltass_universal",
+    "seedMode": "session"
+  },
+
+  "spectrum": {
+    "target": "ltass_universal",
+    "speechMatchedProfile": null,
+    "custom": null,
+    "lfLimitHz": 80,
+    "hfLimitHz": 12500,
+    "lfTrimDb125": 0.0,
+    "correction": { "enabled": true, "speed": "normal", "maxDb": 6.0, "rememberCorrection": true }
+  },
+
+  "spatial": {
+    "algorithm": "auto",
+    "spread": 0.85,
+    "motion": 0.3,
+    "speakerVariation": "high",
+    "neighborhoodSize": 3
+  },
+
+  "outputs": {
+    "rememberDevice": false,
+    "device": null,
+    "layout": "ring4",
+    "channels": [
+      { "index": 0, "deviceChannel": 0, "label": "Ceiling NW", "azimuthDeg": 45,   "zone": 0, "enabled": true, "gainDb": 0.0, "mute": false, "polarityInvert": false, "delayMs": 0.0, "calEqProfile": null },
+      { "index": 1, "deviceChannel": 1, "label": "Ceiling NE", "azimuthDeg": -45,  "zone": 0, "enabled": true, "gainDb": 0.0, "mute": false, "polarityInvert": false, "delayMs": 0.0, "calEqProfile": null },
+      { "index": 2, "deviceChannel": 2, "label": "Ceiling SW", "azimuthDeg": 135,  "zone": 0, "enabled": true, "gainDb": -1.5, "mute": false, "polarityInvert": false, "delayMs": 0.0, "calEqProfile": null },
+      { "index": 3, "deviceChannel": 3, "label": "Ceiling SE", "azimuthDeg": -135, "zone": 0, "enabled": true, "gainDb": 0.0, "mute": false, "polarityInvert": false, "delayMs": 0.0, "calEqProfile": null }
+    ],
+    "zones": [ { "id": 0, "name": "Main", "enabled": true, "levelDb": 0.0, "babbleFractionOffset": 0.0 } ],
+    "limiter": { "enabled": true, "ceilingDbtp": -1.0 }
+  },
+
+  "random": {
+    "seed": null,
+    "deterministic": false
+  },
+
+  "reliability": { "fallbackPolicy": "continuous" },
+
+  "overrides": { },
+
+  "contentHash": "",
+  "x-experiment": { "condition": "B" }
+}

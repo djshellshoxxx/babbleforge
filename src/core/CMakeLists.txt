@@ -4,6 +4,9 @@ add_library(bfcore STATIC
   Version.cpp
 )
 
+file(GLOB bf_config_sources CONFIGURE_DEPENDS config/*.cpp)
+target_sources(bfcore PRIVATE ${bf_config_sources})
+
 target_include_directories(bfcore
   PUBLIC
     ${CMAKE_SOURCE_DIR}/src
@@ -17,3 +20,10 @@ target_link_libraries(bfcore
 )
 
 bf_set_warnings(bfcore)
+
+# random / math / io modules (globbed)
+file(GLOB bf_rng_math_io_sources CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/random/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/math/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/io/*.cpp)
+target_sources(bfcore PRIVATE ${bf_rng_math_io_sources})

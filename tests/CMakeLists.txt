@@ -11,6 +11,10 @@ target_link_libraries(bfcore_tests
     Catch2::Catch2WithMain
 )
 
+target_compile_definitions(bfcore_tests PRIVATE
+  BF_DATA_DIR="${PROJECT_SOURCE_DIR}/resources/data"
+  BF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
 bf_set_warnings(bfcore_tests)
 
 include(CTest)

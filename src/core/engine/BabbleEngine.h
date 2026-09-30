@@ -61,6 +61,11 @@ public:
     void render(float* const* out, int nCh, int nFrames);
     // Plan change at an absolute sample (>= current position).
     void scheduleReplan(const TalkerPlanParams& params, std::int64_t atSample);
+    // Per-slot channel gain vector from the Spatial Renderer (VoiceRenderer::setGains). For
+    // deterministic output call it between render() calls at fixed sample positions.
+    void setSlotGains(std::uint32_t slot, const float* gains, std::size_t n) noexcept {
+        renderer_.setGains(slot, gains, n);
+    }
 
     std::int64_t position() const noexcept { return pos_; }
     const TalkerPlanner& planner() const noexcept { return *planner_; }

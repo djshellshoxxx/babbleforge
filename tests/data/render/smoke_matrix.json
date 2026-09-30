@@ -1,0 +1,10 @@
+{
+  "schema": "babbleforge.matrix/1",
+  "base": "smoke_lab.json",
+  "axes": {
+    "laboratory.talkers": [1, 2],
+    "seed": [1001, 1002]
+  },
+  "durationS": 3,
+  "targetSpeech": { "list": "targets/sentences.csv", "snrDb": [0] }
+}

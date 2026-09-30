@@ -165,6 +165,8 @@ The two components are statistically independent (different sources, different P
 | Spatial motion rate | 1.0 × area | 0.6 × area | 0.3 × area | linear | [E] |
 | Fade in / fade out | 250 / 400 ms | 150 / 250 ms | 80 / 150 ms | log | [E] |
 
+**Area-specified bounds:** when an Area model gives explicit min/max (`PRESETS.md` §3), those values apply at the Balanced anchor (c = 0.5). At other c, they are scaled by the ratio of the anchor formulas: min(c) = area.min · f_min(c)/f_min(0.5) and max(c) = area.max · f_max(c)/f_max(0.5), both rounded and then clamped so that min ≤ m ≤ max. The formula rows above are used only when the Area gives no explicit bounds.
+
 The stationary offset applies only to strategies that expose Character, and only when the strategy's mix is not user-locked (Hybrid with an explicit mix slider ignores Δs). The final value is clamped to [0, 0.9] for NaturalBabbleMask and [0, 1] otherwise.
 
 ### 5.2 Level stability

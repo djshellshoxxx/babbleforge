@@ -371,7 +371,7 @@ The brief's suggestion is reviewed and adjusted. The first launch must be safe, 
 
 | Project | License | Use in BabbleForge | Production dependency? |
 |---|---|---|---|
-| JUCE | AGPLv3 / commercial | Audio I/O, threading, file I/O, DSP primitives (`dsp::Convolution` not used on RT path, see `SPECTRUM_ENGINE.md` §3.4) | Yes (license choice is a project decision) |
+| JUCE | AGPLv3 / commercial | Audio I/O, threading, file I/O, DSP primitives (`dsp::Convolution` not used on RT path, see `SPECTRUM_ENGINE.md` §4.4) | Yes (license choice is a project decision) |
 | Spatial Audio Framework (SAF) | ISC core; some optional modules GPLv2 | Reference for VBAP/MDAP, lattice all-pass decorrelator design, arbitrary layouts. Core ISC modules may be linked; GPL modules must not be | Optional (ISC modules only) |
 | Pyroomacoustics | MIT | Offline room simulation in the validation toolchain | No |
 | Google speech_intelligibility_index | Apache-2.0 (archived Apr 2026) | SII reference oracle for V2 tests | No |

@@ -326,7 +326,7 @@ struct SpeakerRec  { float features[8]; uint32_t firstRecording, nRecordings;
   - VAD region/pause lists: ~8 B per region → ≈ 2–3× the anchor table
   - Worst supported corpus: < 100 MB. Typical: < 2 MB.
 - The snapshot is shared read-only by the planner and preloader (`std::shared_ptr<const CorpusSnapshot>`). It is replaced atomically on commit.
-- **Health tracking:** per-recording failure counters (§7 of `RELIABILITY.md`). A recording is marked unhealthy after 2 decode failures and is excluded until the next re-scan.
+- **Health tracking:** per-recording failure counters (`RELIABILITY.md` §2). A recording is marked unhealthy after 2 decode failures and is excluded until the next re-scan.
 
 ---
 

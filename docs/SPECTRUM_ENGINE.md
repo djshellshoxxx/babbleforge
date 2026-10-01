@@ -51,11 +51,11 @@ All slope curves are anchored at 0 dB at 1 kHz and are flat below 200 Hz before 
 | **White (flat density)** | Band levels +10·log10(f/1000) dB (+3.01 dB/oct), testing only | [I] |
 | **Custom** | 7 octave points (125…8k) ±12 dB (UI recommends ±6), PCHIP-interpolated to 1/3-octave in log-frequency; or a full 26-band table from a file | GUI §31 |
 
-**Provisional Universal LTASS shape (relative to the 500 Hz band).** This is an engineering transcription placeholder: **must be replaced by the exact Byrne et al. 1994 table values before release** (Open Research Question 18). The implementation loads it from the data file, so replacing it needs no code change.
+**Universal LTASS values (relative to the 1 kHz band).** Source: ANSI S3.5-1997 Table 3 standard speech spectrum level, normal vocal effort (the SII standard speech spectrum, closely related to the LTASS), as reproduced in the Apache-2.0 repository `google/speech_intelligibility_index` (`speech_intelligibility_index/sii.py`, https://raw.githubusercontent.com/google/speech_intelligibility_index/main/speech_intelligibility_index/sii.py). Spectrum levels (dB/Hz) were converted to 1/3-octave band levels by adding 10·log10(bandwidth) with IEC base-10 band edges (fc·10^±0.05), then normalised to the 1 kHz band. The Byrne et al. 1994 table could not be verified from two independent reproductions and is not used. The 100 Hz, 125 Hz and 10 kHz values are **extrapolated** (outside the 160 Hz–8 kHz range of the standard); bands outside 100 Hz–10 kHz hold the edge value. The implementation loads the data file, so values can be replaced without code changes.
 
 | Hz | 100 | 125 | 160 | 200 | 250 | 315 | 400 | 500 | 630 | 800 | 1k | 1.25k | 1.6k | 2k | 2.5k | 3.15k | 4k | 5k | 6.3k | 8k | 10k |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| dB | −9 | −5 | −3 | −1.5 | 0 | 0 | 0 | 0 | −1.5 | −3.5 | −5 | −6.5 | −8 | −9 | −10 | −11 | −12 | −13 | −14 | −15 | −17 |
+| dB | −9.0 (extrap.) | −4.6 (extrap.) | −0.6 | 2.5 | 3.7 | 4.0 | 5.6 | 6.3 | 5.1 | 2.3 | 0.0 | −1.0 | −2.9 | −4.7 | −7.8 | −8.5 | −9.7 | −12.7 | −14.4 | −14.9 | −16.0 (extrap.) |
 
 ### 2.3 Effective targets per component
 

@@ -414,7 +414,7 @@ Every item below is an assumption encoded as [E] that requires experimental veri
 15. **Crest factor and headroom**: is L_ref = −26 dBFS appropriate for typical amplifier gain structures in the field?
 16. **Machine robustness**: relative robustness of SSN vs babble against enhancement, separation and ASR.
 17. **Outdoor/free-field defaults**: entirely engineering-derived; requires field trials.
-18. **Universal LTASS table**: the provisional shape in `SPECTRUM_ENGINE.md` §2.2 must be replaced by a transcription of Byrne et al. 1994 before release.
+18. **Universal LTASS table**: the table now uses the ANSI S3.5-1997 standard speech spectrum (160 Hz–8 kHz, normal effort); 100/125 Hz and 10 kHz are extrapolated. Open: verify against the Byrne et al. 1994 universal LTASS table and replace the extrapolated bands with measured values.
 
 ---
 

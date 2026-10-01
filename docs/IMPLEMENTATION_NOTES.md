@@ -123,3 +123,7 @@ Independent noise has ±0.01 SD per 10 s window.
 - The floor is statistical (finite 20 s blocks of a random envelope), not a defect of the analyzer; tests therefore bound m(f) per band rather than expecting zero.
 
 ---
+
+## Universal LTASS target (SPECTRUM_ENGINE.md §2.2, ENGINE.md Open Question 18)
+
+`targets/ltass_universal_byrne1994.json` now holds the ANSI S3.5-1997 Table 3 standard speech spectrum (normal effort, 160 Hz–8 kHz; via google/speech_intelligibility_index) converted to 1/3-octave band levels and normalised to the 1 kHz band. The Byrne et al. 1994 table could not be verified from two independent sources. 100/125 Hz and 10 kHz are extrapolated. The id `ltass_universal` and file name are unchanged.

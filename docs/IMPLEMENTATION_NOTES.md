@@ -114,3 +114,12 @@ Independent noise has ±0.01 SD per 10 s window.
 - Licence decision pending with the project owner
 
 ---
+
+## 11. SPECTRUM_ENGINE.md §8.3 / VALIDATION.md §5: stationary-noise modulation floor
+
+**File/Area:** `SPECTRUM_ENGINE.md` §8.3 (Interpretation), `VALIDATION.md` §5 (expected trends)
+
+**Revised specification:** "SSN modulation is at the noise floor" is quantified: stationary noise shows m(f) at the statistical floor of the analysis (≈ < 0.05 for bands ≤ 4 Hz; rises to ≈ 0.1–0.15 at 8–16 Hz for 20 s blocks).
+- The floor is statistical (finite 20 s blocks of a random envelope), not a defect of the analyzer; tests therefore bound m(f) per band rather than expecting zero.
+
+---

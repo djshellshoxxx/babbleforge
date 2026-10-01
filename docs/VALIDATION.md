@@ -140,7 +140,7 @@ Measured and archived for each:
 
 **Expected trends (checked, since they are research-grounded):**
 - envelope modulation decreases monotonically with N [R: Rosen et al.]
-- SSN modulation is at the noise floor
+- stationary-noise modulation: m(f) at the statistical floor of the analysis (≈ < 0.05 for bands ≤ 4 Hz; rises to ≈ 0.1–0.15 at 8–16 Hz for 20 s blocks)
 - LTASS deviation ≤ 1 dB (octave) across all fixtures, so the spectrum is not a confound
 
 A failure indicates an engine bug or a corpus problem, not a scientific finding.

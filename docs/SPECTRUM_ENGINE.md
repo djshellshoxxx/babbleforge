@@ -301,6 +301,7 @@ publish: 60 s average of m(f) per band, broadband and per octave carrier (7 × 1
 - STI evaluates the preservation of target modulations at 0.63–12.5 Hz [S: IEC 60268-16].
 - A masker with large modulation at these rates leaves dips (glimpses) and is itself speech-like (informational).
 - A masker with low m(f) (stationary or dense babble) masks energetically and continuously.
+- Stationary noise (the SSN masker) shows m(f) at the statistical floor of the analysis (≈ < 0.05 for bands ≤ 4 Hz; rises to ≈ 0.1–0.15 at 8–16 Hz for 20 s blocks).
 - The analyzer quantifies where each strategy lies on this continuum. It is not a predictor of intelligibility in V1.
 
 Expected behavior (verification, not a claim): m(f) at 4 Hz decreases monotonically with the talker count in laboratory fixtures, and SSN gives m(f) ≈ statistical floor (< 0.05 for 20 s blocks).

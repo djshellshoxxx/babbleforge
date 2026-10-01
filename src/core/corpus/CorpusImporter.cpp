@@ -94,7 +94,7 @@ PcaBasis computePca(const std::vector<std::vector<double>>& X, std::vector<std::
             lambda = nrm;
             double diff = 0.0;
             for (std::size_t d = 0; d < D; ++d) diff += std::fabs(w[d] - v[d]);
-            v = w;
+            v.swap(w);
             if (diff < 1e-12) break;
         }
         // Deterministic sign: the largest-magnitude loading is positive.
@@ -247,7 +247,12 @@ ImportResult importCorpus(const ImportOptions& opt) {
                     a.addReason("duplicate.near");
                     a.qualityClass = QualityClass::Rejected;
                 } else {
-                    a.addReason("duplicate.overlap");  // flag only; the passage stays usable
+                    a.addReason("duplicate.overlap");  // flag only; the passage stays usable, its anchors are excluded
+                    // Fingerprint frame f spans 64/5512.5 s; map the aligned query range to 48 kHz samples.
+                    const double sPerFrame = 64.0 / 5512.5 * static_cast<double>(kCacheRate);
+                    const std::int64_t f0 = std::max<std::int64_t>(0, -m.offset);
+                    a.overlapSpans.push_back({static_cast<std::int64_t>(static_cast<double>(f0) * sPerFrame),
+                                              static_cast<std::int64_t>(static_cast<double>(f0 + m.frames) * sPerFrame)});
                 }
             }
             if (a.qualityClass != QualityClass::Rejected) index.add(static_cast<std::uint32_t>(i), a.fingerprint);
@@ -434,6 +439,7 @@ ImportResult importCorpus(const ImportOptions& opt) {
                 g.longestPhraseS = sg.longestPhraseS;
                 g.asl10sDbfs = sg.asl10sDb;
                 g.soloRisk = sg.soloRisk;
+                for (const auto& o : a.overlapSpans) if (sg.anchor >= o.start && sg.anchor < o.end) g.excluded = true;
                 db->insertSegment(g);
             }
         }

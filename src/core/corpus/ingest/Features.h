@@ -14,9 +14,15 @@ namespace bf::ingest {
 // 15.9 dB, thresholds 2^-15 ... 1 of full scale). Input is float full-scale +-1.
 P56Result p56MethodB(const float* x, std::size_t n, double fs);
 
-// Clipping rule of §1.3 on one channel at rate fs: |x| >= 0.999, or >= 3 consecutive samples
-// within 0.01 dB of the file's max |x| that also differ from each other by <= 2^-17 (flat top; 2^-15 would still pass a 50 Hz sine at -1 dBFS, whose per-sample sag is 1.9e-5); runs separated by < 1 ms are merged.
-ClipResult detectClipping(const float* x, std::size_t n, std::size_t stride, double fs);
+// Clipping rule of §1.3 on one channel at rate fs: |x| >= 0.999, or an exact-equality run of >= 3
+// consecutive samples whose |x| are bit-identical (within 1e-7 when `floatSource`) and within 0.01 dB of
+// the file's max |x|. Runs separated by < 1 ms are merged.
+ClipResult detectClipping(const float* x, std::size_t n, std::size_t stride, double fs, bool floatSource = false);
+
+// Fraction of 10 ms frames (16 kHz input) that look like music / non-speech (§1.3): energetic frames in
+// sustained runs with mid-range VAD likelihood (high spectral flatness), or frames inside sustained tonal
+// peak sets (stable harmonics > 500 ms) without syllabic (2-8 Hz) envelope modulation.
+double nonSpeechFraction(const std::vector<float>& x16k);
 
 struct LtassResult {
     bool valid = false;

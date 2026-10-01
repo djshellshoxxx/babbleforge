@@ -134,6 +134,7 @@ void scoreQuality(RecordingAnalysis& a) {
     else if (a.durationS < 30.0) a.addReason("warn.duration");
     if (std::fabs(a.dcOffset) > 0.01) a.addReason("warn.dc_offset");
     if (a.lossy) a.addReason("lossy");
+    if (a.nonSpeechFrac > 0.10) a.addReason("review.nonSpeech");  // review only, never rejected
     if (a.reverberant) a.addReason("reverberant");
     if (a.multichannelSelected) a.addReason("multichannelSelected");
 
@@ -181,7 +182,7 @@ RecordingAnalysis analyzeAudio(const DecodedAudio& in, const AnalyzerConfig& cfg
 
     // --- clipping on the source samples (worst channel) ---
     for (std::size_t c = 0; c < nch; ++c) {
-        const auto cl = detectClipping(in.data.data() + c, nSrc, nch, in.sampleRate);
+        const auto cl = detectClipping(in.data.data() + c, nSrc, nch, in.sampleRate, in.bitDepth == 32);
         a.clipRatio = std::max(a.clipRatio, cl.ratio);
         a.clipRunMs = std::max(a.clipRunMs, cl.longestRunMs);
     }
@@ -345,6 +346,7 @@ RecordingAnalysis analyzeAudio(const DecodedAudio& in, const AnalyzerConfig& cfg
         const auto mask = speechMask10(a.regions, (pcm16.size() + 159) / 160);
         a.f0 = yinF0(x16, mask);
         a.speakingRate = speakingRate(x16, mask, a.f0.track);
+        a.nonSpeechFrac = nonSpeechFraction(x16);
         if (cfg.computeFingerprint) a.fingerprint = computeFingerprint(x16);
     }
 

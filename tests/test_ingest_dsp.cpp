@@ -183,6 +183,30 @@ TEST_CASE("clipping detector", "[ingest][clip]") {
         const auto r = detectClipping(x.data(), x.size(), 1, fs);
         CHECK(r.ratio == Approx(0.0));
     }
+    SECTION("5 / 20 / 50 Hz sines at -1 dBFS are not clipped (exact-equality runs)") {
+        for (double f : {5.0, 20.0, 50.0}) {
+            const auto x = sine(f, 0.8913, 4.0, fs);
+            const auto r = detectClipping(x.data(), x.size(), 1, fs);
+            INFO("f = " << f);
+            CHECK(r.ratio == Approx(0.0));
+            CHECK(r.longestRunMs == Approx(0.0));
+        }
+    }
+    SECTION("digitally hard-clipped sine is flagged (float and gain-changed)") {
+        auto x = sine(5.0, 1.4, 4.0, fs);
+        for (auto& v : x) v = std::clamp(v, -0.8913f, 0.8913f);
+        CHECK(detectClipping(x.data(), x.size(), 1, fs).ratio > 1e-3);
+        CHECK(detectClipping(x.data(), x.size(), 1, fs, true).ratio > 1e-3);
+        for (auto& v : x) v *= 0.5f;
+        CHECK(detectClipping(x.data(), x.size(), 1, fs).ratio > 1e-3);
+    }
+    SECTION("16-bit full-scale clipped file is flagged") {
+        auto x = sine(50.0, 4.0, 2.0, fs);
+        for (auto& v : x) v = std::round(std::clamp(v, -1.0f, 1.0f) * 32767.0f) / 32768.0f;
+        const auto r = detectClipping(x.data(), x.size(), 1, fs);
+        CHECK(r.ratio > 1e-3);
+        CHECK(r.longestRunMs > 3.0);
+    }
     SECTION("hard-clipped 50 Hz sine is flagged") {
         auto x = sine(50.0, 1.5, 2.0, fs);
         for (auto& v : x) v = std::clamp(v, -0.8913f, 0.8913f);

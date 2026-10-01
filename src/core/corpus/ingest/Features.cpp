@@ -1,6 +1,7 @@
 #include "core/corpus/ingest/Features.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <complex>
@@ -83,7 +84,7 @@ P56Result p56MethodB(const float* x, std::size_t n, double fs) {
 }
 
 // ---------------------------------------------------------------- clipping
-ClipResult detectClipping(const float* x, std::size_t n, std::size_t stride, double fs) {
+ClipResult detectClipping(const float* x, std::size_t n, std::size_t stride, double fs, bool floatSource) {
     ClipResult res;
     if (n == 0) return res;
     double peak = 0.0;
@@ -91,20 +92,25 @@ ClipResult detectClipping(const float* x, std::size_t n, std::size_t stride, dou
     if (peak <= 0.0) return res;
     const double thr = peak * std::pow(10.0, -0.01 / 20.0);
     std::vector<std::uint8_t> mark(n, 0);
-    std::size_t run = 0;
+    // Exact-equality runs: >= 3 consecutive samples with identical |x| (within 1e-7 of the run's first sample for float
+    // sources) that sit within 0.01 dB of the file maximum. Smooth low-frequency sines never produce such runs.
+    const double tol = floatSource ? 1e-7 : 0.0;
+    std::size_t runStartIdx = 0, run = 0;
+    double runVal = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
-        const double a = std::fabs(x[i * stride]);
+        const double a = std::fabs(static_cast<double>(x[i * stride]));
         if (a >= 0.999) mark[i] = 1;
-        if (a >= thr) {
-            // Flat top: consecutive samples must also agree to ~1 LSB at 16 bit (2^-17, see Features.h), so a smooth
-            // low-frequency sine near its peak is not flagged.
-            const bool flat = run > 0 && std::fabs(static_cast<double>(x[i * stride]) - static_cast<double>(x[(i - 1) * stride])) <= 0x1p-17;
-            run = (run == 0 || flat) ? run + 1 : 1;
-            if (run == 3) mark[i - 2] = mark[i - 1] = 1;
-            if (run >= 3) mark[i] = 1;
+        if (a >= thr && run > 0 && std::fabs(a - runVal) <= tol) {
+            ++run;
+        } else if (a >= thr) {
+            run = 1;
+            runVal = a;
+            runStartIdx = i;
         } else {
             run = 0;
         }
+        if (run == 3) mark[runStartIdx] = mark[runStartIdx + 1] = mark[i] = 1;
+        else if (run > 3) mark[i] = 1;
     }
     std::size_t count = 0;
     const std::size_t mergeGap = static_cast<std::size_t>(fs * 0.001);
@@ -407,6 +413,97 @@ std::vector<std::uint32_t> computeFingerprint(const std::vector<float>& x16k) {
         havePrev = true;
     }
     return out;
+}
+
+// ---------------------------------------------------------------- music / non-speech (§1.3)
+double nonSpeechFraction(const std::vector<float>& x) {
+    constexpr std::size_t N = 1024, HOP = 160, K = 5;
+    if (x.size() < N + HOP) return 0.0;
+    const std::size_t nf = (x.size() - N) / HOP + 1;
+    static const std::vector<float> win = [] {
+        std::vector<float> w(N);
+        for (std::size_t i = 0; i < N; ++i) w[i] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * std::acos(-1.0) * static_cast<double>(i) / static_cast<double>(N)));
+        return w;
+    }();
+    FftF fft(N);
+    std::vector<float> buf(N);
+    std::vector<std::complex<float>> spec(fft.numBins());
+    std::vector<double> eDb(nf), flat(nf);
+    std::vector<std::array<int, K>> peaks(nf);
+    std::vector<double> p(fft.numBins());
+    for (std::size_t f = 0; f < nf; ++f) {
+        double e = 0.0;
+        for (std::size_t i = 0; i < N; ++i) { buf[i] = x[f * HOP + i] * win[i]; e += static_cast<double>(x[f * HOP + i]) * x[f * HOP + i]; }
+        eDb[f] = 10.0 * std::log10(std::max(e / static_cast<double>(N), 1e-12));
+        fft.forward(buf.data(), spec.data());
+        for (std::size_t k = 0; k < p.size(); ++k) p[k] = static_cast<double>(std::norm(spec[k]));
+        // Flatness 200 Hz - 4 kHz (bin width 15.625 Hz).
+        double ls = 0.0, sm = 0.0;
+        int cnt = 0;
+        for (std::size_t k = 13; k <= 256; ++k) { ls += std::log(p[k] + 1e-20); sm += p[k] + 1e-20; ++cnt; }
+        flat[f] = std::exp(ls / cnt) / (sm / cnt);
+        // Strongest local maxima 94 Hz - 4 kHz within 30 dB of the strongest.
+        std::vector<std::pair<double, int>> pk;
+        double pmax = 0.0;
+        for (std::size_t k = 6; k <= 256; ++k) pmax = std::max(pmax, p[k]);
+        for (std::size_t k = 6; k <= 256; ++k)
+            if (p[k] > p[k - 1] && p[k] >= p[k + 1] && p[k] >= pmax * 1e-3 && pmax > 0.0) pk.push_back({p[k], static_cast<int>(k)});
+        std::sort(pk.begin(), pk.end(), [](const auto& l, const auto& r) { return l.first > r.first; });
+        peaks[f].fill(-100);
+        for (std::size_t i = 0; i < std::min<std::size_t>(K, pk.size()); ++i) peaks[f][i] = pk[i].second;
+    }
+    std::vector<double> sorted(eDb);
+    std::sort(sorted.begin(), sorted.end());
+    const double floorDb = sorted[sorted.size() / 10];
+    std::vector<std::uint8_t> active(nf), audible(nf), mark(nf, 0), stable(nf, 0);
+    for (std::size_t f = 0; f < nf; ++f) {
+        active[f] = eDb[f] > floorDb + 10.0 ? 1 : 0;  // stands out from the file's noise floor
+        audible[f] = eDb[f] > -60.0 ? 1 : 0;          // continuous music has no floor to stand out from
+    }
+
+    // (a) energetic noise-like frames (VAD likelihood mid-range, high flatness) in runs >= 300 ms.
+    {
+        std::size_t run = 0;
+        for (std::size_t f = 0; f <= nf; ++f) {
+            const bool hit = f < nf && audible[f] && (active[f] || floorDb > -60.0) && flat[f] >= 0.3;
+            if (hit) { ++run; continue; }
+            if (run >= 30) for (std::size_t j = f - run; j < f; ++j) mark[j] = 1;
+            run = 0;
+        }
+    }
+    // (b) sustained tonal peaks: peak set of frame f largely contained in the (+-1 bin) set of f-1.
+    for (std::size_t f = 1; f < nf; ++f) {
+        if (!audible[f]) continue;
+        int hits = 0;
+        for (int b : peaks[f]) {
+            if (b < 0) continue;
+            for (int c : peaks[f - 1]) if (std::abs(b - c) <= 1) { ++hits; break; }
+        }
+        stable[f] = hits >= 3 ? 1 : 0;
+    }
+    {
+        std::size_t run = 0;
+        for (std::size_t f = 0; f <= nf; ++f) {
+            if (f < nf && stable[f]) { ++run; continue; }
+            if (run >= 50) {  // > 500 ms
+                const std::size_t a = f - run;
+                // Syllabic modulation: envelope fluctuation about a 500 ms moving mean.
+                std::vector<double> res(run);
+                for (std::size_t j = 0; j < run; ++j) {
+                    const std::size_t lo = j >= 25 ? j - 25 : 0, hi = std::min(run, j + 26);
+                    double m = 0.0;
+                    for (std::size_t t = lo; t < hi; ++t) m += eDb[a + t];
+                    res[j] = eDb[a + j] - m / static_cast<double>(hi - lo);
+                }
+                if (percentile(res, 0.9) - percentile(res, 0.1) < 4.0)
+                    for (std::size_t j = a; j < f; ++j) mark[j] = 1;
+            }
+            run = 0;
+        }
+    }
+    std::size_t n = 0;
+    for (auto m : mark) n += m;
+    return static_cast<double>(n) / static_cast<double>(nf);
 }
 
 void FingerprintIndex::add(std::uint32_t recIdx, const std::vector<std::uint32_t>& fp) {

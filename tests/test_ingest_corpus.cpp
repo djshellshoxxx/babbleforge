@@ -448,4 +448,48 @@ SECTION("import of an unusable input directory fails cleanly") {
 }
 }
 
+TEST_CASE("corpus: overlapping content excludes anchors in the later recording", "[ingest][corpus][overlap]") {
+    const auto in = fixtureDir("overlap_in");
+    const auto root = fixtureDir("overlap_out");
+    const auto first = speechLike(25.0, 31);
+    const auto other = speechLike(30.0, 32);
+    // Later file: 30 s of unrelated speech followed by the first 12 s of the earlier file.
+    std::vector<float> second = other;
+    second.insert(second.end(), first.begin(), first.begin() + 48000 * 12);
+    std::filesystem::create_directories(in / "a");
+    std::filesystem::create_directories(in / "b");
+    REQUIRE(writeWav(in / "a/first.wav", first));
+    REQUIRE(writeWav(in / "b/second.wav", second));
+
+    ImportOptions opt;
+    opt.inputDir = in;
+    opt.corpusRoot = root;
+    opt.threads = 1;
+    const auto res = importCorpus(opt);
+    REQUIRE(res.ok);
+    const auto f = byPath(res);
+    const auto& rep = f.at("b/second.wav");
+    CHECK(rep.cls != QualityClass::Rejected);
+    CHECK(std::count(rep.reasons.begin(), rep.reasons.end(), "duplicate.overlap") == 1);
+    CHECK(std::count(f.at("a/first.wav").reasons.begin(), f.at("a/first.wav").reasons.end(), "duplicate.overlap") == 0);
+
+    auto db = CorpusDb::open((root / "corpus.sqlite").string(), true);
+    REQUIRE(db);
+    std::map<std::int64_t, std::string> paths;
+    for (const auto& r : db->recordings()) paths[r.recordingId] = r.sourcePath;
+    std::size_t inside = 0, insideExcluded = 0, outside = 0, outsideExcluded = 0, firstExcluded = 0;
+    for (const auto& g : db->segments()) {
+        const bool isSecond = paths[g.recordingId].find("second") != std::string::npos;
+        if (!isSecond) { firstExcluded += g.excluded ? 1 : 0; continue; }
+        // Stay clear of the region edges (alignment granularity ~12 ms plus anchor snapping).
+        if (g.anchorSample > 48000 * 31 && g.anchorSample < 48000 * 41) { ++inside; insideExcluded += g.excluded ? 1 : 0; }
+        if (g.anchorSample < 48000 * 29) { ++outside; outsideExcluded += g.excluded ? 1 : 0; }
+    }
+    CHECK(firstExcluded == 0);
+    CHECK(inside > 0);
+    CHECK(insideExcluded == inside);
+    CHECK(outside > 0);
+    CHECK(outsideExcluded == 0);
+}
+
 #endif  // BF_WITH_CORPUS_DB

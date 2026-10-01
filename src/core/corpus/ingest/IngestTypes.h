@@ -81,6 +81,9 @@ struct RecordingAnalysis {
     double durationS = 0, speechS = 0, speechRatio = 0;
     double peakDb = -200, truePeakDb = -200, rmsDb = -200, aslDb = -200, activityPct = 0;
     double lufsI = -200, noiseFloorDb = -120, snrDb = 0, bandwidthHz = 0;
+    double nonSpeechFrac = 0;  // fraction of frames flagged music/non-speech (§1.3)
+    // Anchors (48 kHz samples) inside content overlapping an earlier recording (§3.13).
+    std::vector<SampleSpan> overlapSpans;
     double clipRatio = 0, clipRunMs = 0, dcOffset = 0;
     double spectralCentroidHz = 0, speakingRate = 0;
     F0Stats f0;

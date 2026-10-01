@@ -244,3 +244,46 @@ TEST_CASE("speaking rate is measured for syllabic modulation", "[ingest][pipelin
     const double rate = speakingRate(x, mask, f0.track);
     CHECK(rate == Approx(4.0).margin(0.8));
 }
+
+namespace {
+// Sustained chords (C major / A minor / F major, 2 s each), four harmonics per note.
+std::vector<float> chordMusic(double seconds, double fs = 48000.0) {
+    static const double chords[3][3] = {{261.63, 329.63, 392.0}, {220.0, 261.63, 329.63}, {174.61, 220.0, 261.63}};
+    const auto n = static_cast<std::size_t>(seconds * fs);
+    std::vector<float> x(n, 0.0f);
+    for (std::size_t i = 0; i < n; ++i) {
+        const double t = static_cast<double>(i) / fs;
+        const auto& c = chords[static_cast<std::size_t>(t / 2.0) % 3];
+        double v = 0.0;
+        for (double f : c)
+            for (int h = 1; h <= 4; ++h) v += std::sin(2.0 * M_PI * f * h * t) / h;
+        x[i] = static_cast<float>(0.05 * v);
+    }
+    return x;
+}
+}  // namespace
+
+TEST_CASE("non-speech detection: sustained chords are flagged for review, speech is not", "[ingest][pipeline][nonspeech]") {
+    SECTION("fraction") {
+        const auto m48 = chordMusic(30.0);
+        const auto music16 = resample(m48.data(), m48.size(), 48000.0, 16000.0);
+        CHECK(nonSpeechFraction(music16) > 0.5);
+        const auto& sp = goodSpeech();
+        const auto speech16 = resample(sp.data(), sp.size(), 48000.0, 16000.0);
+        CHECK(nonSpeechFraction(speech16) < 0.10);
+    }
+    SECTION("analyzer: review.nonSpeech reason, never a rejection reason of its own") {
+        const auto m = analyzeAudio(toDecoded(chordMusic(35.0)));
+        CHECK(m.nonSpeechFrac > 0.10);
+        CHECK(m.hasReason("review.nonSpeech"));
+        CHECK_FALSE(goodAnalysis().hasReason("review.nonSpeech"));
+        CHECK(goodAnalysis().nonSpeechFrac < 0.10);
+    }
+    SECTION("speech with a little music stays under the threshold") {
+        auto x = goodSpeech();
+        const auto mus = chordMusic(2.0);
+        for (std::size_t i = 0; i < mus.size() && i < x.size(); ++i) x[i] += mus[i];
+        const auto a = analyzeAudio(toDecoded(x));
+        CHECK_FALSE(a.hasReason("review.nonSpeech"));
+    }
+}

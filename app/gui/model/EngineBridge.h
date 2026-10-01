@@ -57,6 +57,15 @@ struct EngineStatus {
     // Plan pushes.
     std::uint64_t pushes = 0;
     std::string lastPushError;
+    // OUTPUT page telemetry (ENGINE §5 meters on the output, TEST SPEAKERS state).
+    struct OutputTelemetry {
+        std::vector<double> rmsFastDb, truePeakDb;  // per output channel, dBFS / dBTP
+        double rmsDb = -200.0, lufsS = -200.0, truePeakDbMax = -200.0, leq60Db = -200.0;
+        double limiterGrMaxDb = 0.0, limiterAbove05 = 0.0, latencyMs = 0.0;
+        bool testRunning = false;
+        double testElapsedS = 0.0;
+        int testOutputs = 0;
+    } out;
 };
 
 class EngineBridge final : private juce::Timer, private AppState::Listener {
@@ -97,6 +106,9 @@ public:
     void reset();
     void setDevice(const std::string& deviceId);  // stops, recreates the controller on the new device
     void refreshDevices();                          // async; listeners get a status update
+    // TEST SPEAKERS / STOP TEST (GUI §23). Starts the engine first when it is stopped and stops
+    // it again when the test ends.
+    void testSpeakers(bool on);
 
     // Plan pushes.
     void schedulePush();  // (re)starts the debounce timer
@@ -161,6 +173,7 @@ private:
     std::optional<Preset> lastPushed_;
     std::atomic<std::uint64_t> pushes_{0};
     std::string pushError_;
+    std::atomic<bool> testAutoStarted_{false}, testWasRunning_{false};
 
     // UI state.
     EngineStatus ui_;

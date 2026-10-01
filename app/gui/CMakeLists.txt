@@ -10,12 +10,16 @@ target_sources(BabbleForge PRIVATE
   model/Catalog.cpp model/Catalog.h
   model/EngineBridge.cpp model/EngineBridge.h
   model/PresetSession.cpp model/PresetSession.h
+  model/OutputModel.cpp model/OutputModel.h
   # Pages self-register (pages/Page.h); add new page sources here.
   pages/Page.cpp pages/Page.h
   pages/RunPage.cpp pages/RunPage.h
   pages/MaskPage.cpp pages/MaskPage.h
+  pages/AreaPage.cpp pages/AreaPage.h pages/AreaOutputWidgets.h
+  pages/OutputPage.cpp pages/OutputPage.h
   pages/PlaceholderPages.cpp
-  tests/UiTests.cpp)
+  tests/UiTests.cpp
+  tests/AreaOutputTests.cpp)
 target_include_directories(BabbleForge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(BabbleForge
   PRIVATE bf_juce_backend juce::juce_gui_basics juce::juce_data_structures juce::juce_recommended_config_flags)

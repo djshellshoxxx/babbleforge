@@ -813,6 +813,11 @@ MaskStatistics MaskEngine::statistics() const {
     s.leq60Db = m.leq60AllDb;
     for (double v : m.truePeakMaxDb) s.truePeakMaxDb = std::max(s.truePeakMaxDb, v);
     for (double v : m.samplePeakMaxDb) s.samplePeakMaxDb = std::max(s.samplePeakMaxDb, v);
+    s.rmsFastChDb = m.rmsFastDb;
+    s.truePeakChDb = m.truePeakDb;
+    s.rmsFastAllDb = m.rmsFastAllDb;
+    s.truePeak10sDb = m.truePeak10sDb;
+    s.rms10sDb = m.rms10sDb;
     s.crestDb = s.outputRmsDb > -200.0 ? s.truePeakMaxDb - s.outputRmsDb : 0.0;
 
     s.configuredBabbleFraction = cfg_.realtime ? rtBabbleFraction() : configuredB_;

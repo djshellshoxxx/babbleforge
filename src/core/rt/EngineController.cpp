@@ -9,6 +9,7 @@
 #include "BuildInfo.h"
 #include "core/Version.h"
 #include "core/config/AtomicFile.h"
+#include "core/config/Preset.h"
 #include "core/engine/Scenario.h"
 #include "core/talker/SourcePreparer.h"
 
@@ -409,6 +410,47 @@ CommandResult EngineController::setStrength(double db) {
     if (!doc.contains("macros") || !doc["macros"].is_object()) doc["macros"] = nlohmann::json::object();
     doc["macros"]["strengthDb"] = db;
     return setPreset(doc);
+}
+
+CommandResult EngineController::testSpeakers(bool on) {
+    std::lock_guard<CheckedMutex> lk(engineMutex_);
+    MaskEngine* me = engine_ ? engine_->engine() : nullptr;
+    if (me == nullptr) return CommandResult::IllegalTransition;
+    OutputSourceStage& stage = me->sourceStage();
+    if (!on) {
+        stage.stopTest();
+        return CommandResult::Ok;
+    }
+    std::vector<OutputChannel> channels;
+    std::vector<OutputZone> zones;
+    int n = 1;
+    {
+        std::lock_guard<CheckedMutex> pl(presetMutex_);
+        n = std::max(1, layoutCopy_.size());
+        const auto r = parsePreset(presetCopy_.dump());
+        if (r.ok) {
+            channels = r.preset.outputs.channels;
+            zones = r.preset.outputs.zones;
+        }
+    }
+    const std::vector<int> outs = enabledOutputs(channels, zones, n);
+    TestSpeakersOptions opt;
+    std::string err;
+    if (!startTestSpeakers(stage, outs, opt, &err)) return CommandResult::Failed;
+    testOutputs_.store(static_cast<int>(outs.size()), std::memory_order_relaxed);
+    return CommandResult::Ok;
+}
+
+EngineController::TestSpeakersState EngineController::testSpeakersState() const {
+    std::lock_guard<CheckedMutex> lk(engineMutex_);
+    TestSpeakersState s;
+    MaskEngine* me = engine_ ? engine_->engine() : nullptr;
+    if (me == nullptr) return s;
+    CalibrationBus& bus = me->sourceStage().bus();
+    s.running = bus.running();
+    s.elapsedS = bus.elapsedSeconds();
+    s.outputs = testOutputs_.load(std::memory_order_relaxed);
+    return s;
 }
 
 void EngineController::onDeviceEvent(const DeviceEvent& e) {

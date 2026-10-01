@@ -100,6 +100,16 @@ public:
     CommandResult reset();
     CommandResult setPreset(const nlohmann::json& presetDoc);  // "setPlan"
     CommandResult setStrength(double db);
+    // TEST SPEAKERS (GUI §23): sequential channel-identification signal over the enabled outputs
+    // (CalibrationBus ChannelId), or STOP TEST. IllegalTransition when no engine is prepared.
+    CommandResult testSpeakers(bool on);
+    struct TestSpeakersState {
+        bool running = false;
+        double elapsedS = 0.0;
+        int outputs = 0;  // outputs in the sequence
+        double burstS = 1.0, gapS = 0.5;
+    };
+    TestSpeakersState testSpeakersState() const;
 
     // Device events (backend handler; any non-RT thread).
     void onDeviceEvent(const DeviceEvent& e);
@@ -219,6 +229,7 @@ private:
     std::thread::id controlId_;
     double lastCpuWallS_ = 0.0, lastCpuS_ = 0.0;
     mutable std::atomic<double> cpuPct_{0.0};
+    std::atomic<int> testOutputs_{0};
 };
 
 }  // namespace bf::rt

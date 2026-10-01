@@ -160,6 +160,7 @@ std::string EngineBridge::ensureDevice() {
 }
 
 void EngineBridge::start() {
+    testAutoStarted_ = false;  // an explicit Start keeps masking after a test
     flushPush();
     post([this] {
         if (ensureDevice().empty()) {
@@ -228,6 +229,31 @@ void EngineBridge::refreshDevices() {
         auto devs = backend_->devices();
         std::lock_guard<std::mutex> lk(snapMutex_);
         devices_ = std::move(devs);
+    });
+}
+
+void EngineBridge::testSpeakers(bool on) {
+    post([this, on] {
+        auto c = controller();
+        if (!on) {
+            if (c) c->testSpeakers(false);
+            return;
+        }
+        if (ensureDevice().empty()) return;
+        c = controller();
+        if (!c) return;
+        const EngineState st = c->state();
+        if (st == EngineState::Stopped) {
+            c->start();
+            testAutoStarted_ = true;
+            if (!c->waitForState(EngineState::Running, 20.0) && c->state() != EngineState::Degraded) {
+                testAutoStarted_ = false;
+                return;
+            }
+        } else if (!isMaskingState(st)) {
+            return;  // device lost / error: nothing to test
+        }
+        if (c->testSpeakers(true) != rt::CommandResult::Ok) testAutoStarted_ = false;
     });
 }
 
@@ -348,9 +374,26 @@ void EngineBridge::sample() {
         s.outputs = plan.spatial.activeOutputs;
         s.limiterEnabled = plan.level.limiterEnabled;
         s.voicesActive = plan.babbleEnabled ? plan.talkers.targetMean() : 0.0;
+        const auto ts = c->testSpeakersState();
+        s.out.testRunning = ts.running;
+        s.out.testElapsedS = ts.elapsedS;
+        s.out.testOutputs = ts.outputs;
+        if (testWasRunning_.exchange(ts.running) && !ts.running && testAutoStarted_.exchange(false))
+            post([this] {  // the test ended on its own: return to the state before it
+                if (auto cc = controller()) cc->stop();
+            });
         if (isMaskingState(s.state)) {
             const MaskStatistics st = c->statistics();
             if (st.samples > 0) {
+                s.out.rmsFastDb = st.rmsFastChDb;
+                s.out.truePeakDb = st.truePeakChDb;
+                s.out.rmsDb = st.rmsFastAllDb;
+                s.out.lufsS = st.lufsS;
+                s.out.truePeakDbMax = st.truePeak10sDb;
+                s.out.leq60Db = st.leq60Db;
+                s.out.limiterGrMaxDb = st.limiterGrMaxDb;
+                s.out.limiterAbove05 = st.limiterAbove05Fraction;
+                if (st.fs > 0.0) s.out.latencyMs = 1000.0 * (st.latencySamples + s.bufferFrames) / st.fs;
                 s.haveStats = true;
                 if (st.babbleActive) s.voicesActive = st.meanActive;
                 s.outputLevelDb = st.lufsS > -150.0 ? st.lufsS : st.outputRmsDb;

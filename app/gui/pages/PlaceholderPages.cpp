@@ -55,16 +55,6 @@ private:
     juce::TextButton showIntro_{"Show Advanced mode explanation again"};
 };
 
-PageRegistrar areaReg({"area", "AREA", 30, PageInfo::Sidebar, [](PageContext& c) {
-                           return std::make_unique<PlaceholderPage>(
-                               c, "Area", "Area type, size and speaker setup; Advanced spatial output, spread, "
-                                          "speaker variation, zones and speaker mapping (GUI \xc2\xa7" "14-\xc2\xa7" "21, \xc2\xa7" "33-\xc2\xa7" "37).");
-                       }});
-PageRegistrar outputReg({"output", "OUTPUT", 40, PageInfo::Sidebar, [](PageContext& c) {
-                             return std::make_unique<PlaceholderPage>(
-                                 c, "Output", "Output device, Test Speakers, master level and meters; Advanced driver, "
-                                              "sample rate, buffer, channels, technical meters and limiter (GUI \xc2\xa7" "22-\xc2\xa7" "24, \xc2\xa7" "38-\xc2\xa7" "40).");
-                         }});
 PageRegistrar analysisReg({"analysis", "ANALYSIS", 50, PageInfo::Sidebar,
                            [](PageContext& c) {
                                return std::make_unique<PlaceholderPage>(

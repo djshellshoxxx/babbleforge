@@ -13,6 +13,7 @@ public:
     StatusBar(EngineBridge& bridge, AppState& state);
     ~StatusBar() override;
     const juce::String& text() const noexcept { return text_; }
+    const juce::String& warning() const noexcept { return warning_; }
     static juce::String simpleText(const EngineStatus& s);
     static juce::String advancedText(const EngineStatus& s);
     void paint(juce::Graphics&) override;

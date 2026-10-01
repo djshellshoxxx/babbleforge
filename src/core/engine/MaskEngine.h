@@ -157,6 +157,9 @@ struct MaskStatistics {
     double lufsS = -200.0, lufsI = -200.0, leq60Db = -200.0;
     double truePeakMaxDb = -200.0, samplePeakMaxDb = -200.0;
     double crestDb = 0.0;  // true-peak max - RMS, whole run
+    // Live meters (GUI OUTPUT page): per channel RMS-fast (300 ms) and true peak (last 1 s), dBFS.
+    std::vector<double> rmsFastChDb, truePeakChDb;
+    double rmsFastAllDb = -200.0, truePeak10sDb = -200.0, rms10sDb = -200.0;
 
     // Mix (MASK_STRATEGIES §4.2).
     double configuredBabbleFraction = 0.0;

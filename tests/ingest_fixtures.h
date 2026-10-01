@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <numbers>
 #include <random>
 #include <string>
 #include <vector>
@@ -74,10 +75,10 @@ inline std::vector<float> speechLike(double seconds, std::uint64_t seed, double 
             phase += f0 / 48000.0;
             phase -= std::floor(phase);
             const double t = static_cast<double>(i - r.start) / 48000.0;
-            const double sm = std::sin(M_PI * 4.0 * t);
+            const double sm = std::sin(std::numbers::pi * 4.0 * t);
             double env = 0.15 + 0.85 * sm * sm;
             const auto d = std::min<std::int64_t>({i - r.start, r.end - 1 - i, 240});
-            env *= 0.5 - 0.5 * std::cos(M_PI * static_cast<double>(d) / 240.0);
+            env *= 0.5 - 0.5 * std::cos(std::numbers::pi * static_cast<double>(d) / 240.0);
             x[k] = static_cast<float>(env * (2.0 * phase - 1.0));
             eTone += static_cast<double>(x[k]) * x[k];
             eAsp += static_cast<double>(asp[k]) * asp[k];

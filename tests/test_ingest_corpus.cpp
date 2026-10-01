@@ -168,7 +168,7 @@ SECTION("import: classification, duplicates, reason codes") {
 SECTION("import: DB schema, manifest, cache layout") {
     const auto& b = built();
     REQUIRE(b.res.ok);
-    const auto root = std::filesystem::current_path() / "ingest_fixtures" / "corpus_out";
+    const auto root = bftest::fixturePath("corpus_out");
     // Schema columns exactly as CORPUS.md §5.
     sqlite3* db = nullptr;
     REQUIRE(sqlite3_open_v2((root / "corpus.sqlite").string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
@@ -269,7 +269,7 @@ SECTION("import: DB schema, manifest, cache layout") {
 SECTION("loader: snapshot fields and anchors match the database") {
     const auto& b = built();
     REQUIRE(b.res.ok);
-    const auto root = std::filesystem::current_path() / "ingest_fixtures" / "corpus_out";
+    const auto root = bftest::fixturePath("corpus_out");
     LoadedCorpus lc;
     std::string err;
     REQUIRE(loadCorpus(root, lc, &err));
@@ -338,7 +338,7 @@ SECTION("loader: snapshot fields and anchors match the database") {
 SECTION("loader: cache audio equals the processed audio within 24-bit quantisation") {
     const auto& b = built();
     REQUIRE(b.res.ok);
-    const auto root = std::filesystem::current_path() / "ingest_fixtures" / "corpus_out";
+    const auto root = bftest::fixturePath("corpus_out");
     LoadedCorpus lc;
     REQUIRE(loadCorpus(root, lc));
     auto cdb = CorpusDb::open((root / "corpus.sqlite").string(), true);
@@ -378,7 +378,7 @@ SECTION("loader: cache audio equals the processed audio within 24-bit quantisati
 SECTION("FlacCacheAudioSource keeps at most 64 decoders open") {
     const auto& b = built();
     REQUIRE(b.res.ok);
-    const auto root = std::filesystem::current_path() / "ingest_fixtures" / "corpus_out";
+    const auto root = bftest::fixturePath("corpus_out");
     LoadedCorpus lc;
     REQUIRE(loadCorpus(root, lc));
     auto cdb = CorpusDb::open((root / "corpus.sqlite").string(), true);

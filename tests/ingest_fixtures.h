@@ -5,7 +5,15 @@
 #include <cstdint>
 #include <filesystem>
 #include <random>
+#include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "core/corpus/CorpusSnapshot.h"
 #include "core/corpus/SyntheticCorpus.h"
@@ -14,8 +22,18 @@
 
 namespace bftest {
 
+// Per-process directory so concurrently running test processes (ctest -j) never share paths.
+inline std::filesystem::path fixturePath(const std::string& name) {
+#ifdef _WIN32
+    const auto pid = static_cast<unsigned long>(::GetCurrentProcessId());
+#else
+    const auto pid = static_cast<unsigned long>(::getpid());
+#endif
+    return std::filesystem::current_path() / "ingest_fixtures" / ("p" + std::to_string(pid)) / name;
+}
+
 inline std::filesystem::path fixtureDir(const std::string& name) {
-    auto d = std::filesystem::current_path() / "ingest_fixtures" / name;
+    auto d = fixturePath(name);
     std::filesystem::remove_all(d);
     std::filesystem::create_directories(d);
     return d;

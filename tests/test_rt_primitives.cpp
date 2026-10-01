@@ -84,7 +84,7 @@ TEST_CASE("RcuSlot: control publishes while RT acquires; retire queue and GC rec
     {
         RcuSlot<Payload> slot;
         std::atomic<bool> stop{false}, bad{false};
-        std::atomic<std::uint64_t> seen{0};
+        std::atomic<std::uint64_t> seen{0}, observed{0};
         std::thread rt([&] {
             ScopedRealtimeThread mark;
             std::uint64_t last = 0;
@@ -93,6 +93,7 @@ TEST_CASE("RcuSlot: control publishes while RT acquires; retire queue and GC rec
                     if (p->inv != ~p->value || p->value < last) bad.store(true);
                     if (p->value != last) seen.fetch_add(1, std::memory_order_relaxed);
                     last = p->value;
+                    observed.store(last, std::memory_order_release);
                 }
             }
         });
@@ -100,14 +101,19 @@ TEST_CASE("RcuSlot: control publishes while RT acquires; retire queue and GC rec
         for (std::uint64_t i = 1; i <= 20000; ++i) {
             slot.publish(std::make_unique<Payload>(i));
             if (i % 16 == 0) freed += slot.collectGarbage();
+            // Handshake for the first publications: the RT side must see each one before the next is
+            // published (deterministic, independent of scheduling); the rest race freely.
+            if (i <= 64)
+                while (observed.load(std::memory_order_acquire) != i) std::this_thread::yield();
         }
         // Let RT pick up the last one.
         while (slot.hasPending()) std::this_thread::yield();
+        while (observed.load(std::memory_order_acquire) != 20000) std::this_thread::yield();
         stop.store(true, std::memory_order_release);
         rt.join();
         freed += slot.collectGarbage();
         CHECK_FALSE(bad.load());
-        CHECK(seen.load() > 10);
+        CHECK(seen.load() >= 64);
         CHECK(freed == 19999);            // every object but the current one
         CHECK(Payload::alive.load() == 1);  // the current object, owned by the slot
     }

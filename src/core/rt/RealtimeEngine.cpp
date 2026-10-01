@@ -259,7 +259,7 @@ void RealtimeEngine::audioCallback(float* const* out, int numOutputs, int numFra
 
     const std::int64_t t1 = monotonicMicros();
     const double load = bufUs > 0.0 ? static_cast<double>(t1 - t0) / bufUs : 0.0;
-    const auto bucket = static_cast<std::size_t>(std::clamp(load * 32.0, 0.0, 63.0));
+    const auto bucket = static_cast<std::size_t>(std::clamp(load * 128.0, 0.0, 255.0));
     loadHist_[bucket].fetch_add(1, std::memory_order_relaxed);
     if (static_cast<float>(load) > loadMax_.load(std::memory_order_relaxed))
         loadMax_.store(static_cast<float>(load), std::memory_order_relaxed);
@@ -705,14 +705,14 @@ RtMetrics RealtimeEngine::metrics() const {
     m.overruns = overruns_.load(std::memory_order_relaxed);
     m.callbackGaps = gaps_.load(std::memory_order_relaxed);
     std::uint64_t total = 0;
-    std::array<std::uint64_t, 64> h{};
-    for (std::size_t i = 0; i < 64; ++i) total += h[i] = loadHist_[i].load(std::memory_order_relaxed);
+    std::array<std::uint64_t, 256> h{};
+    for (std::size_t i = 0; i < 256; ++i) total += h[i] = loadHist_[i].load(std::memory_order_relaxed);
     auto pct = [&](double q) {
         if (total == 0) return 0.0;
         std::uint64_t acc = 0;
-        for (std::size_t i = 0; i < 64; ++i) {
+        for (std::size_t i = 0; i < 256; ++i) {
             acc += h[i];
-            if (static_cast<double>(acc) >= q * static_cast<double>(total)) return static_cast<double>(i + 1) / 32.0;
+            if (static_cast<double>(acc) >= q * static_cast<double>(total)) return static_cast<double>(i + 1) / 128.0;
         }
         return 2.0;
     };

@@ -1,7 +1,13 @@
 // bfbench — DSP load measurement tool (docs/ENGINE.md §7).
 //
 //   bfbench --seconds 60 (--corpus <root> | --synthetic-corpus <speakers>)
-//           [--json output.json] [--data-dir <dir>] [--block <frames>]
+//           [--json output.json] [--data-dir <dir>] [--block <frames>] [--realtime]
+//
+// --realtime: instead of the offline MaskEngine loop, runs the full RealtimeEngine through an
+// EngineController on a (real-time paced) NullBackend with the planner, preload and analysis
+// threads running, and reports the engine's own per-callback DSP load (callback body only, so
+// preload/analysis work on the service threads is excluded). The talker count comes from the
+// preset's strategy; the 16-channel config is skipped (no named 16-channel layout).
 //
 // Measures callback time per process() call for each configuration in §7's table.
 // Outputs: table to stdout, optional JSON file. Exit code 0 always.
@@ -24,6 +30,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -34,6 +41,8 @@
 #include "core/engine/MaskEngine.h"
 #include "core/engine/OfflineRenderer.h"
 #include "core/engine/Scenario.h"
+#include "core/rt/EngineController.h"
+#include "core/rt/NullBackend.h"
 #include "core/spatial/OutputLayout.h"
 #include "core/strategy/StrategyTypes.h"
 #if BF_WITH_CORPUS_DB
@@ -60,6 +69,7 @@ struct Result {
     std::vector<double> dspLoads;  // in percent, one per process() call
     double p50 = -1.0, p99 = -1.0, maxLoad = -1.0;
     double totalRealtimeFactor = 0.0;
+    std::uint64_t xruns = 0;
 };
 
 // Convert mono/stereo/4/6/8/16 to OutputLayout
@@ -193,11 +203,59 @@ Result benchmarkConfig(const Config& cfg, const bf::CorpusHandle& corpus,
     return result;
 }
 
+// Realtime path: callback load as measured inside RealtimeEngine (excludes service threads).
+Result benchmarkRealtime(const Config& cfg, const bf::CorpusHandle& corpus, const bf::DataSet& ds, double durationS,
+                         int blockSize) {
+    Result result;
+    result.cfg = cfg;
+    const char* layout = cfg.numChannels == 2 ? "stereo" : cfg.numChannels == 8 ? "ring8" : nullptr;
+    if (!layout) {
+        result.error = "no named layout for " + std::to_string(cfg.numChannels) + " channels";
+        return result;
+    }
+    bf::rt::NullBackend backend;
+    backend.setDevicePeriods(3);
+    bf::rt::EngineControllerConfig cc;
+    cc.dataSet = &ds;
+    cc.backend = &backend;
+    cc.deviceId = backend.devices().front().id;
+    cc.sampleRate = cfg.sampleRate;
+    cc.bufferFrames = blockSize;
+    cc.seed = 1;
+    cc.preset = nlohmann::json{{"schema", "babbleforge.preset"}, {"schemaVersion", "1.0"}, {"name", "bench"},
+                               {"area", "office"}, {"strategy", "balanced"}, {"outputs", {{"layout", layout}}}};
+    cc.corpus = corpus.snapshot;
+    cc.audio = corpus.audio;
+    cc.engine.blockPoolBytes = 64u << 20;
+    bf::rt::RtMetrics m;
+    {
+        bf::rt::EngineController ctl(cc);
+        if (ctl.start() != bf::rt::CommandResult::Ok || !ctl.waitForState(bf::rt::EngineState::Running, 15.0)) {
+            result.error = "engine did not reach Running";
+            return result;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto c0 = ctl.metrics().callbacks;
+        while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < durationS)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        m = ctl.metrics();
+        result.totalRealtimeFactor = static_cast<double>(m.callbacks - c0) * blockSize / cfg.sampleRate / durationS;
+        ctl.stop();
+        ctl.waitForState(bf::rt::EngineState::Stopped, 5.0);
+    }
+    result.p50 = m.dspLoadP50 * 100.0;  // metrics are fractions of the buffer period
+    result.p99 = m.dspLoadP99 * 100.0;
+    result.maxLoad = m.dspLoadMax * 100.0;
+    result.xruns = m.xruns;
+    result.ok = true;
+    return result;
+}
+
 int usage(const char* msg = nullptr) {
     if (msg) std::cerr << "bfbench: " << msg << "\n";
     std::cerr << "usage:\n"
                  "  bfbench --seconds N (--corpus <root> | --synthetic-corpus <speakers>)\n"
-                 "          [--json output.json] [--data-dir <dir>] [--block N]\n";
+                 "          [--json output.json] [--data-dir <dir>] [--block N] [--realtime]\n";
     return 1;
 }
 
@@ -208,6 +266,7 @@ int main(int argc, char** argv) {
     int synthSpeakers = 0;
     double durationS = 60.0;
     int blockSize = 480;
+    bool realtime = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -223,6 +282,7 @@ int main(int argc, char** argv) {
         else if (a == "--synthetic-corpus") synthSpeakers = std::atoi(next().c_str());
         else if (a == "--json") jsonPath = next();
         else if (a == "--data-dir") dataDir = next();
+        else if (a == "--realtime") realtime = true;
         else if (a == "--block") blockSize = std::atoi(next().c_str());
         else if (a == "--version") {
             std::cout << "bfbench " << bf::versionString() << "\n";
@@ -293,7 +353,8 @@ int main(int argc, char** argv) {
                   << cfg.sampleRate << " Hz)... ";
         std::cout.flush();
 
-        Result r = benchmarkConfig(cfg, corpus, dsr.data, durationS, blockSize);
+        Result r = realtime ? benchmarkRealtime(cfg, corpus, dsr.data, durationS, blockSize)
+                            : benchmarkConfig(cfg, corpus, dsr.data, durationS, blockSize);
 
         if (r.ok) {
             std::cout << "done\n";
@@ -311,7 +372,7 @@ int main(int argc, char** argv) {
 
     // Print results table
     std::cout << "\n";
-    std::cout << "DSP Load Results (buffer size " << blockSize << " frames)\n";
+    std::cout << (realtime ? "Realtime callback " : "Offline ") << "DSP Load Results (buffer size " << blockSize << " frames)\n";
     std::cout << "================================================================\n";
     std::cout << std::left << std::setw(28) << "Configuration"
               << std::right << std::setw(12) << "p50 (%)"

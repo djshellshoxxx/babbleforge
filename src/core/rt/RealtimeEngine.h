@@ -176,7 +176,7 @@ private:
     std::atomic<bool> fadeDone_{true};
     std::atomic<const IAudioBackend*> backend_{nullptr};
     std::atomic<std::uint64_t> callbacks_{0}, xruns_{0}, overruns_{0}, gaps_{0};
-    std::array<std::atomic<std::uint32_t>, 64> loadHist_{};
+    std::array<std::atomic<std::uint32_t>, 256> loadHist_{};
     std::atomic<float> loadMax_{0.0f};
     std::atomic<std::int64_t> lastCallbackUs_{0};
     std::atomic<bool> ftz_{false};

@@ -34,7 +34,7 @@ TEST_CASE("macro data files load with per-parameter interpolation", "[strategy][
   CHECK(ds.levelVarTruncationSigma == Approx(2.0));
 }
 
-TEST_CASE("Voice Amount anchors are exact and log-interpolated (§9)", "[strategy][macros]") {
+TEST_CASE("Voice Amount anchors are exact and log-interpolated (sec. 9)", "[strategy][macros]") {
   bf::MacroTables mt(dataSet());
   CHECK(mt.voiceAmountMean(0.0, 6.5) == Approx(3.5).epsilon(1e-12));
   CHECK(mt.voiceAmountMean(0.5, 6.5) == Approx(6.5).epsilon(1e-12));
@@ -63,7 +63,7 @@ TEST_CASE("Voice Amount anchors are exact and log-interpolated (§9)", "[strateg
   CHECK(p.talkers.mean == Approx(6.5));
 }
 
-TEST_CASE("Character anchor rows (§5.1)", "[strategy][macros]") {
+TEST_CASE("Character anchor rows (sec. 5.1)", "[strategy][macros]") {
   bf::MacroTables mt(dataSet());
   const auto n = mt.character(0.0), b = mt.character(0.5), d = mt.character(1.0);
   CHECK(n.meanActiveFactor == Approx(0.70));
@@ -99,7 +99,7 @@ TEST_CASE("Character anchor rows (§5.1)", "[strategy][macros]") {
   CHECK(mt.formulaMax(1.0, 6.5) == 8);   // round(7.8)
 }
 
-TEST_CASE("Area-specified bounds scale with the anchor formula ratio (§5.1)", "[strategy][macros]") {
+TEST_CASE("Area-specified bounds scale with the anchor formula ratio (sec. 5.1)", "[strategy][macros]") {
   bf::MacroTables mt(dataSet());
   // Office: m 6.5, 4/9 at c = 0.5.
   auto t = mt.talkerCounts(6.5, 0.5, 6.5, 4, 9, 14);
@@ -155,7 +155,7 @@ TEST_CASE("Character monotonicity through buildPlan", "[strategy][macros]") {
   }
 }
 
-TEST_CASE("CVR mapping table (§6.2)", "[strategy][macros][cvr]") {
+TEST_CASE("CVR mapping table (sec. 6.2)", "[strategy][macros][cvr]") {
   bf::MacroTables mt(dataSet());
   auto lo = mt.cvr(0.0), med = mt.cvr(0.5), hi = mt.cvr(1.0);
   CHECK(lo.minFloor == 1);

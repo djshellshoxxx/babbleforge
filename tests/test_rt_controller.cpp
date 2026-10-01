@@ -313,7 +313,7 @@ TEST_CASE("Persistence: LKG restore on invalid session config, session save and 
     }
 }
 
-TEST_CASE("Diagnostics snapshot carries the RELIABILITY §6.1 fields and the health model", "[rt][controller][diag]") {
+TEST_CASE("Diagnostics snapshot carries the RELIABILITY sec. 6.1 fields and the health model", "[rt][controller][diag]") {
     NullBackend backend;
     auto cc = baseConfig(backend, bftest::presetDoc("office", "speech_noise", "ring4"));
     EngineController ctl(cc);

@@ -35,7 +35,7 @@ bf::MaskRenderPlan officeBalanced(bf::FallbackPolicy policy = bf::FallbackPolicy
 
 }  // namespace
 
-TEST_CASE("degrade: reduced plans for S available speakers (RELIABILITY §3)", "[strategy][degrade]") {
+TEST_CASE("degrade: reduced plans for S available speakers (RELIABILITY sec. 3)", "[strategy][degrade]") {
   const auto& s = strategy("balanced");
   const auto base = officeBalanced();
   REQUIRE(base.speakersNeeded == 14);  // max(P = 14, max + 4 = 13)
@@ -113,7 +113,7 @@ TEST_CASE("degrade: reduced plans for S available speakers (RELIABILITY §3)", "
   }
 }
 
-TEST_CASE("degrade: fallback policies (RELIABILITY §4)", "[strategy][degrade]") {
+TEST_CASE("degrade: fallback policies (RELIABILITY sec. 4)", "[strategy][degrade]") {
   const auto& s = strategy("balanced");
   SECTION("Safe switches to stationary on any insufficient corpus") {
     const auto base = officeBalanced(bf::FallbackPolicy::Safe);

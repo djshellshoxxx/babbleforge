@@ -61,7 +61,7 @@ TEST_CASE("office / balanced plan matches the documented defaults", "[strategy][
   CHECK(p.selector.diversity == "high");
 }
 
-TEST_CASE("strategy relative overrides (PRESETS.md §5)", "[strategy][plan]") {
+TEST_CASE("strategy relative overrides (PRESETS.md sec. 5)", "[strategy][plan]") {
   SECTION("natural") {
     auto p = plan("natural", "office");
     CHECK(p.strategyClass == bf::StrategyClass::NaturalBabbleMask);
@@ -312,7 +312,7 @@ TEST_CASE("all areas x strategies produce valid plans", "[strategy][plan]") {
         bf::SpatialAlgorithm::SmallMultichannel);
 }
 
-TEST_CASE("§9 clamp: mean <= available speakers - 2", "[strategy][plan]") {
+TEST_CASE("sec. 9 clamp: mean <= available speakers - 2", "[strategy][plan]") {
   bf::MacroState m;
   m.voiceAmount = 1.0;
   m.character = 1.0;  // m = 16 * 1.45 / 1.045, max 27, pool 31
@@ -333,7 +333,7 @@ TEST_CASE("§9 clamp: mean <= available speakers - 2", "[strategy][plan]") {
   checkPlanValid(p, 33);
 }
 
-TEST_CASE("talker-count mode table (TALKER_ENGINE.md §5)", "[strategy][modes]") {
+TEST_CASE("talker-count mode table (TALKER_ENGINE.md sec. 5)", "[strategy][modes]") {
   struct Row {
     int n, pool;
     double mean;

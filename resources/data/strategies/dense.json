@@ -1,0 +1,22 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "dense",
+  "class": "BabbleMask",
+  "displayName": "Dense",
+  "descriptionSimple": "High-density masking with minimal gaps.",
+  "overrides": {
+    "characterDefault": 0.9,
+    "babbleFractionDelta": -0.1
+  },
+  "forced": {
+    "characterRange": [
+      0.75,
+      1.0
+    ],
+    "babbleFractionRange": [
+      0.4,
+      1.0
+    ]
+  },
+  "evidenceLabel": "engineering-default-requires-validation"
+}

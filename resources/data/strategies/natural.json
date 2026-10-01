@@ -1,0 +1,31 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "natural",
+  "class": "NaturalBabbleMask",
+  "displayName": "Natural",
+  "descriptionSimple": "Resembles distant conversation with longer gaps.",
+  "overrides": {
+    "characterDefault": 0.2,
+    "babbleFractionDelta": 0.1,
+    "motionScale": 1.5
+  },
+  "forced": {
+    "characterRange": [
+      0.0,
+      0.35
+    ],
+    "babbleFractionRange": [
+      0.0,
+      0.95
+    ],
+    "motionRange": [
+      0.0,
+      1.0
+    ],
+    "stationaryFractionRange": [
+      0.0,
+      0.9
+    ]
+  },
+  "evidenceLabel": "engineering-default-requires-validation"
+}

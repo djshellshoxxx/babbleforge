@@ -1,0 +1,48 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "large_room",
+  "displayName": "Large Room",
+  "description": "Large hall or boardroom",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 12.0,
+    "pool": 28,
+    "minActive": 9,
+    "maxActive": 15,
+    "recommendedRange": [
+      10,
+      16
+    ]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.4
+  },
+  "macros": {
+    "character": 0.65,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": 0.0,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "distributed",
+    "spread": 0.9,
+    "motion": 0.3,
+    "speakerVariation": "high",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 8,
+    "minWithoutAdvisory": 4
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": []
+}

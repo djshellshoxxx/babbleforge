@@ -1,0 +1,21 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "x-fixture": "NAT",
+  "x-description": "Office stochastic natural",
+  "preset": {
+    "name": "validation-NAT",
+    "area": "office",
+    "strategy": "natural",
+    "outputs": {
+      "layout": "stereo"
+    }
+  },
+  "seed": 1001,
+  "durationS": 600,
+  "sampleRate": 48000,
+  "outputFormat": {
+    "container": "wav",
+    "sampleFormat": "float32"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "schema": "babbleforge.macros.cvrmapping/2",
+  "source": "docs/MASK_STRATEGIES.md §6.2",
+  "notes": "-1 means 'off / no rule'. Step parameters take the value of mapping i where i = number of stepThresholds <= r. A log curve whose lower anchor is off stays off below the first step threshold and takes the upper anchor value above it.",
+  "interpolation": {
+    "minActiveFloor": "step",
+    "dominanceCapDb": "linear",
+    "levelSigmaMultiplier": "linear",
+    "forcedOverlapAtHandoverMs": "linear",
+    "onsetMaskingWindowMs": "step",
+    "segmentSelectionWeightForSoloRisk": "linear",
+    "minimumStationaryFraction": "linear",
+    "maxPhraseContinuityS": "log"
+  },
+  "stepThresholds": [0.33, 0.66],
+  "mappings": [
+    {
+      "r": 0.0,
+      "label": "Low",
+      "minActiveFloor": 1,
+      "dominanceCapDb": 6.0,
+      "levelSigmaMultiplier": 1.0,
+      "forcedOverlapAtHandoverMs": 0,
+      "onsetMaskingWindowMs": -1,
+      "segmentSelectionWeightForSoloRisk": 1.0,
+      "minimumStationaryFraction": 0.0,
+      "maxPhraseContinuityS": -1
+    },
+    {
+      "r": 0.5,
+      "label": "Medium",
+      "minActiveFloor": 2,
+      "dominanceCapDb": 4.0,
+      "levelSigmaMultiplier": 0.8,
+      "forcedOverlapAtHandoverMs": 150,
+      "onsetMaskingWindowMs": 300,
+      "segmentSelectionWeightForSoloRisk": 0.6,
+      "minimumStationaryFraction": 0.05,
+      "maxPhraseContinuityS": 10.0
+    },
+    {
+      "r": 1.0,
+      "label": "High",
+      "minActiveFloor": 3,
+      "dominanceCapDb": 2.5,
+      "levelSigmaMultiplier": 0.6,
+      "forcedOverlapAtHandoverMs": 400,
+      "onsetMaskingWindowMs": 100,
+      "segmentSelectionWeightForSoloRisk": 0.3,
+      "minimumStationaryFraction": 0.1,
+      "maxPhraseContinuityS": 6.0
+    }
+  ]
+}

@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BabbleForge Web Demo</title>
+<meta name="description" content="BabbleForge speech-privacy masker running locally in your browser (WebAssembly build of the desktop engine).">
+<link rel="stylesheet" href="./style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161b22'/%3E%3Cpath d='M6 18v-4M11 22V10M16 25V7M21 21v-10M26 17v-2' stroke='%2358a6ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">BabbleForge <span class="tag">web demo</span></div>
+  <div class="mode" role="group" aria-label="Interface mode">
+    <button id="modeSimple" class="seg on" type="button">SIMPLE</button>
+    <button id="modeAdvanced" class="seg" type="button">ADVANCED</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="nav" aria-label="Pages">
+    <button data-page="run" class="on" type="button">RUN</button>
+    <button data-page="mask" type="button">MASK</button>
+    <button data-page="area" type="button">AREA</button>
+    <button data-page="output" type="button">OUTPUT</button>
+    <button data-page="analysis" class="adv-only" type="button">ANALYSIS</button>
+    <button data-page="about" type="button">ABOUT</button>
+  </nav>
+
+  <main id="pages">
+    <!-- RUN -->
+    <section id="page-run" class="page on">
+      <div class="hero">
+        <div id="runArea" class="hero-area">OFFICE</div>
+        <div id="runStrategy" class="hero-strategy">Balanced Masking</div>
+        <button id="startBtn" class="start" type="button" disabled>LOADING…</button>
+        <div id="runState" class="run-state">READY</div>
+        <div id="elapsed" class="elapsed">00:00:00</div>
+      </div>
+      <div class="card">
+        <label class="ctl"><span>Area</span><select id="areaSel"></select></label>
+        <label class="ctl"><span>Mask Type</span><select id="strategySel"></select></label>
+        <p id="strategyDesc" class="hint"></p>
+      </div>
+      <div class="card">
+        <div class="slider" data-ctl="strength"></div>
+        <div class="slider" data-ctl="character"></div>
+        <div class="ctl-row">
+          <span class="lbl">Coverage</span>
+          <label><input type="radio" name="coverage" value="stereo" checked> Stereo</label>
+          <label><input type="radio" name="coverage" value="multi"> Multi-Speaker</label>
+        </div>
+        <p class="hint multi-note hidden">Multi-speaker layouts are rendered by the engine and folded to your two browser channels (stereo downmix).</p>
+      </div>
+      <div class="card">
+        <div class="lbl">Recommended</div>
+        <div class="cards3">
+          <button class="qcard" data-quick="balanced" type="button">Balanced</button>
+          <button class="qcard" data-quick="natural" type="button">Natural</button>
+          <button class="qcard" data-quick="dense" type="button">Dense</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="lbl">Current activity</div>
+        <div class="bar"><div id="activityBar" class="fill"></div></div>
+        <div class="row-split"><span id="voicesActive">— voices active</span><span id="healthText">Output idle</span></div>
+      </div>
+    </section>
+
+    <!-- MASK -->
+    <section id="page-mask" class="page">
+      <div class="card">
+        <label class="ctl"><span>Masking Style</span><select id="strategySel2"></select></label>
+        <p id="strategyDesc2" class="hint"></p>
+        <div class="slider" data-ctl="voiceAmount"></div>
+        <div class="slider" data-ctl="voiceVariety"></div>
+        <div class="slider" data-ctl="cvr"></div>
+        <div class="slider mix-ctl" data-ctl="mix"></div>
+      </div>
+      <details class="card adv-only" open>
+        <summary>Talker Engine</summary>
+        <div class="grid2">
+          <div class="slider" data-ctl="pool"></div>
+          <div class="slider" data-ctl="average"></div>
+          <div class="slider" data-ctl="minimum"></div>
+          <div class="slider" data-ctl="maximum"></div>
+        </div>
+        <p class="hint">Minimum ≤ Average ≤ Maximum ≤ Pool is enforced automatically. <span id="densityText"></span></p>
+      </details>
+      <details class="card adv-only">
+        <summary>Talker Timing</summary>
+        <div class="grid2">
+          <div class="slider" data-ctl="maxGap"></div>
+          <div class="slider" data-ctl="segMin"></div>
+          <div class="slider" data-ctl="segMax"></div>
+          <div class="slider" data-ctl="gainVar"></div>
+          <div class="slider" data-ctl="fade"></div>
+        </div>
+      </details>
+      <details class="card adv-only" open>
+        <summary>Stationary Masker</summary>
+        <label class="check"><input id="statEnabled" type="checkbox"> Enabled</label>
+        <div class="slider stat-dep" data-ctl="statContribution"></div>
+        <label class="ctl stat-dep"><span>Noise Seed</span>
+          <select id="seedMode"><option value="session">Random</option><option value="fixed">Fixed</option></select></label>
+      </details>
+      <details class="card adv-only" open>
+        <summary>Spectrum</summary>
+        <label class="ctl"><span>Target</span><select id="spectrumSel"></select></label>
+        <canvas id="spectrumCanvas" class="plot" width="640" height="200"></canvas>
+        <div id="eqBands" class="eq hidden"></div>
+        <label class="check"><input id="corrEnabled" type="checkbox"> Maintain target spectrum (slow correction)</label>
+        <label class="ctl"><span>Correction speed</span>
+          <select id="corrSpeed"><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select></label>
+      </details>
+    </section>
+
+    <!-- AREA -->
+    <section id="page-area" class="page">
+      <div class="card">
+        <label class="ctl"><span>Area Type</span><select id="areaSel2"></select></label>
+        <p id="areaDesc" class="hint"></p>
+        <div class="ctl-row simple-only">
+          <span class="lbl">Speaker Setup</span>
+          <label><input type="radio" name="speakers" value="stereo" checked> 2 Speakers</label>
+          <label><input type="radio" name="speakers" value="ring4"> 4 Speakers</label>
+          <label><input type="radio" name="speakers" value="ring8"> More than 4</label>
+        </div>
+        <div id="advisories" class="advisory"></div>
+      </div>
+      <div class="card adv-only">
+        <div class="lbl">Spatial Output</div>
+        <div class="ctl-row" id="layoutRow">
+          <label><input type="radio" name="layout" value="mono"> Mono</label>
+          <label><input type="radio" name="layout" value="stereo"> Stereo</label>
+          <label><input type="radio" name="layout" value="ring4"> 4 Channel</label>
+          <label><input type="radio" name="layout" value="ring6"> 6 Channel</label>
+          <label><input type="radio" name="layout" value="ring8"> 8 Channel</label>
+        </div>
+        <p class="hint multi-note hidden">4/6/8-channel layouts are rendered with the full spatial engine and folded to browser stereo (constant-power downmix by speaker azimuth). Decorrelation between speakers is partly lost in the fold-down.</p>
+        <div class="slider" data-ctl="spread"></div>
+        <div class="slider" data-ctl="variation"></div>
+        <div class="sub">Channel decorrelation</div>
+      </div>
+      <div class="card">
+        <div class="lbl">Speaker map</div>
+        <canvas id="mapCanvas" class="plot square" width="320" height="320"></canvas>
+        <p class="hint">Dots are talker slots placed by the spatial engine; bright = speaking now.</p>
+      </div>
+    </section>
+
+    <!-- OUTPUT -->
+    <section id="page-output" class="page">
+      <div class="card">
+        <div class="row-split"><span class="lbl">Output device</span><span>Browser default output (Web Audio)</span></div>
+        <div class="ctl-row">
+          <span class="lbl">Mode</span>
+          <label><input type="radio" name="coverage2" value="stereo" checked> Stereo</label>
+          <label><input type="radio" name="coverage2" value="multi"> Multi-Speaker</label>
+        </div>
+        <div class="slider" data-ctl="strength2"></div>
+        <div id="chMeters" class="meters"></div>
+        <div class="row-split"><span id="levelWord" class="levelword">—</span><span id="outStatus">Status: idle</span></div>
+        <button id="testBtn" class="btn" type="button">TEST SPEAKERS</button>
+        <p class="hint">Digital level only — not SPL. The acoustic level depends on your device volume and speakers.</p>
+      </div>
+      <div class="card adv-only">
+        <div class="lbl">Technical meters</div>
+        <div class="kv" id="techMeters"></div>
+      </div>
+      <div class="card adv-only">
+        <div class="lbl">Output limiter</div>
+        <label class="check"><input id="limEnabled" type="checkbox"> Enabled</label>
+        <div class="slider" data-ctl="ceiling"></div>
+      </div>
+      <div class="card adv-only">
+        <div class="lbl">Audio engine</div>
+        <div class="kv" id="audioInfo"></div>
+      </div>
+    </section>
+
+    <!-- ANALYSIS -->
+    <section id="page-analysis" class="page">
+      <div class="cards">
+        <div class="card">
+          <div class="lbl">Voice Activity</div>
+          <div class="kv" id="anVoice"></div>
+          <canvas id="voiceCanvas" class="plot" width="480" height="180"></canvas>
+        </div>
+        <div class="card">
+          <div class="row-split"><span class="lbl">Spectrum</span>
+            <span class="seg-row"><button class="seg on" data-spec="third" type="button">1/3 Oct</button><button class="seg" data-spec="oct" type="button">Octave</button><button class="seg" data-spec="fft" type="button">FFT</button></span></div>
+          <canvas id="anSpecCanvas" class="plot" width="480" height="200"></canvas>
+          <div class="kv" id="anSpec"></div>
+        </div>
+        <div class="card">
+          <div class="lbl">Output</div>
+          <div class="kv" id="anOut"></div>
+        </div>
+        <div class="card">
+          <div class="lbl">Spatial</div>
+          <div class="kv" id="anSpatial"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ABOUT -->
+    <section id="page-about" class="page">
+      <div class="card prose">
+        <h2>About this demo</h2>
+        <p>This page runs the <b>same C++ masking engine</b> as the BabbleForge desktop app, compiled to WebAssembly, with the same factory data files (areas, strategies, macros, spectrum targets). Settings map to a preset document that goes through the engine's own compose → validate → plan pipeline; plan changes use the engine's crossfades.</p>
+        <p><b>Privacy:</b> everything runs locally in your browser. No audio, settings or analytics leave your device; the page only downloads its own files.</p>
+        <p><b>Level:</b> meters show digital level (dBFS / LUFS) only — not SPL.</p>
+        <p id="corpusAbout"></p>
+        <p><b>Differences from the desktop app:</b> output goes to the browser's default stereo device (multichannel layouts are folded to stereo); the engine renders ~0.5 s ahead in a Web Worker, so setting changes are heard after about half a second; there is no device selection, preset library, corpus import, or real-time thread priority.</p>
+        <p><a href="./corpus/ATTRIBUTION.md">Speech corpus attribution</a> · <a href="https://github.com/djshellshoxxx/babbleforge">Source code</a></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer class="status">
+  <span id="stAudio">Audio: Web Audio</span>
+  <span id="stVoices">Voices: loading…</span>
+  <span id="stEngine">Engine: LOADING</span>
+  <span id="stLimiter" class="warn hidden">Limiter disabled</span>
+  <span class="muted">Runs locally · Digital level only — not SPL</span>
+</footer>
+
+<dialog id="advDialog">
+  <p>Advanced mode exposes detailed audio and masking controls.</p>
+  <p>Changing advanced settings can alter the behavior of the selected preset.</p>
+  <div class="dlg-btns"><button id="advCancel" class="btn" type="button">Cancel</button><button id="advOk" class="btn primary" type="button">Enable Advanced</button></div>
+</dialog>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

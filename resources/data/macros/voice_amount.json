@@ -1,0 +1,13 @@
+{
+  "schema": "babbleforge.macros.voiceamount/2",
+  "source": "docs/MASK_STRATEGIES.md §9",
+  "interp": "log",
+  "meanActiveRange": [1.0, 32.0],
+  "availableSpeakerMargin": 2,
+  "pool": { "factor": 1.8, "offset": 2 },
+  "anchors": [
+    { "v": 0.0, "label": "Few", "meanActiveTalkers": 3.5, "area": false, "interp": "log" },
+    { "v": 0.5, "label": "Medium", "meanActiveTalkers": null, "area": true, "interp": "log" },
+    { "v": 1.0, "label": "Many", "meanActiveTalkers": 16.0, "area": false, "interp": "log" }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "office",
+  "displayName": "Office",
+  "description": "1–4 person offices",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 6.5,
+    "pool": 14,
+    "minActive": 4,
+    "maxActive": 9,
+    "recommendedRange": [4, 8]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.30
+  },
+  "macros": {
+    "character": 0.55,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": -1.5,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "auto",
+    "spread": 0.6,
+    "motion": 0.3,
+    "speakerVariation": "medium",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 2,
+    "minWithoutAdvisory": 1
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": [
+    {
+      "when": "outputs < 2",
+      "text": "A single speaker makes the masker easy to localize. Two or more are recommended."
+    }
+  ]
+}

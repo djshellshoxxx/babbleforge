@@ -1,0 +1,28 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "x-fixture": "SSN-L",
+  "x-description": "Stationary speech-shaped noise, Universal LTASS",
+  "preset": {
+    "name": "validation-SSN-L",
+    "area": "office",
+    "strategy": "research",
+    "outputs": {
+      "layout": "mono"
+    },
+    "spectrum": {
+      "target": "ltass_universal"
+    }
+  },
+  "seed": 1001,
+  "durationS": 300,
+  "sampleRate": 48000,
+  "outputFormat": {
+    "container": "wav",
+    "sampleFormat": "float32"
+  },
+  "laboratory": {
+    "mode": "ssn",
+    "rmsNormalization": "two-pass"
+  }
+}

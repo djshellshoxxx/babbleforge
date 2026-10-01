@@ -1,0 +1,9 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "preset": { "name": "lab", "area": "office", "strategy": "research", "outputs": { "layout": "mono" } },
+  "seed": 1001,
+  "durationS": 4,
+  "sampleRate": 48000,
+  "laboratory": { "mode": "continuousN", "talkers": 2, "maxGapMs": 100, "rmsNormalization": "two-pass", "spectrumMatch": "none" }
+}

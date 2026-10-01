@@ -1,0 +1,48 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "common_area",
+  "displayName": "Common Area",
+  "description": "Common area, lounge",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 8.0,
+    "pool": 24,
+    "minActive": 4,
+    "maxActive": 12,
+    "recommendedRange": [
+      6,
+      12
+    ]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.15
+  },
+  "macros": {
+    "character": 0.25,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": 0.0,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "auto",
+    "spread": 0.8,
+    "motion": 0.8,
+    "speakerVariation": "medium",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 4,
+    "minWithoutAdvisory": 2
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": []
+}

@@ -1,0 +1,48 @@
+{
+  "schema": "babbleforge.area/1",
+  "id": "open_office",
+  "displayName": "Open Office",
+  "description": "Open office environment",
+  "evidenceLabel": "engineering-default-requires-validation",
+  "talkers": {
+    "meanActive": 8.5,
+    "pool": 20,
+    "minActive": 6,
+    "maxActive": 11,
+    "recommendedRange": [
+      7,
+      12
+    ]
+  },
+  "mix": {
+    "balancedStationaryFraction": 0.45
+  },
+  "macros": {
+    "character": 0.65,
+    "voiceAmount": 0.5,
+    "clearVoiceReduction": 1.0,
+    "voiceDiversity": "high"
+  },
+  "spectrum": {
+    "target": "ltass_universal",
+    "lfLimitHz": 80,
+    "lfTrimDb125": 0.0,
+    "useSpeechMatchedIfAvailable": false
+  },
+  "spatial": {
+    "algorithm": "distributed",
+    "spread": 0.85,
+    "motion": 0.3,
+    "speakerVariation": "high",
+    "neighborhoodSize": 3
+  },
+  "outputs": {
+    "minRecommended": 4,
+    "minWithoutAdvisory": 2
+  },
+  "level": {
+    "defaultStrengthDb": 0.0,
+    "maxSimpleStrengthDb": 9.0
+  },
+  "advisories": []
+}

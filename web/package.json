@@ -1,0 +1,16 @@
+{
+  "name": "babbleforge-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "BabbleForge web demo: the desktop masking engine compiled to WebAssembly",
+  "type": "module",
+  "scripts": {
+    "wasm": "bash scripts/build-wasm.sh",
+    "build": "node scripts/build.mjs",
+    "serve": "npx --yes serve dist",
+    "test:parity": "node tests/parity.mjs",
+    "test:smoke": "node tests/smoke.mjs",
+    "test": "node tests/parity.mjs && node tests/smoke.mjs"
+  },
+  "license": "SEE LICENSE IN ../README.md"
+}

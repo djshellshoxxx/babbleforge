@@ -1,0 +1,91 @@
+name: Web demo (GitHub Pages)
+
+# Builds the BabbleForge engine to WebAssembly (web/wasm, Emscripten), checks it bit-exact
+# against the native bfrender, builds the static site (web/dist), smoke-tests it in headless
+# Chromium and deploys it to GitHub Pages.
+# Enable once: Settings -> Pages -> Source: GitHub Actions (see web/README.md).
+
+on:
+  push:
+    branches: [ main, claude/babbleforge-v1-engine-spec-2ivcgh ]
+    paths:
+      - 'web/**'
+      - 'src/core/**'
+      - 'resources/data/**'
+      - 'tools/webdemo/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  EMSDK_VERSION: 6.0.10
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Cache emsdk
+      id: emsdk-cache
+      uses: actions/cache@v4
+      with:
+        path: web/.emsdk
+        key: emsdk-${{ runner.os }}-${{ env.EMSDK_VERSION }}
+
+    - name: Install emsdk
+      if: steps.emsdk-cache.outputs.cache-hit != 'true'
+      run: |
+        git clone --depth 1 https://github.com/emscripten-core/emsdk web/.emsdk
+        web/.emsdk/emsdk install "$EMSDK_VERSION"
+        web/.emsdk/emsdk activate "$EMSDK_VERSION"
+
+    - name: Build WASM engine
+      run: |
+        web/.emsdk/emsdk activate "$EMSDK_VERSION" >/dev/null
+        bash web/scripts/build-wasm.sh
+
+    - name: Build native bfrender (parity reference)
+      run: |
+        cmake -S . -B build-native -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          -DBF_BUILD_TESTS=OFF -DBF_WITH_CORPUS_DB=OFF
+        cmake --build build-native --target bfrender
+
+    - name: Parity test (native vs WASM, bit-exact)
+      run: node web/tests/parity.mjs --bfrender build-native/tools/bfrender/bfrender
+
+    - name: Build site
+      run: node web/scripts/build.mjs
+
+    - name: Smoke test (headless Chromium)
+      working-directory: web
+      run: |
+        npm install --no-save --no-package-lock playwright@1.56.1
+        npx playwright install --with-deps chromium
+        node tests/smoke.mjs
+
+    - uses: actions/upload-pages-artifact@v3
+      with:
+        path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - id: deployment
+      uses: actions/deploy-pages@v4

@@ -1,0 +1,18 @@
+{
+  "schema": "babbleforge.strategy/1",
+  "id": "hybrid",
+  "class": "HybridMask",
+  "displayName": "Hybrid",
+  "descriptionSimple": "User-controlled mix of babble and stationary masking.",
+  "overrides": {
+    "babbleFraction": 0.5
+  },
+  "forced": {
+    "characterRange": [
+      0.0,
+      1.0
+    ],
+    "mixUserLocked": true
+  },
+  "evidenceLabel": "engineering-default-requires-validation"
+}

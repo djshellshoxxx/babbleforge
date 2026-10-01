@@ -1,0 +1,6 @@
+add_subdirectory(bfrender)
+add_subdirectory(bfbench)
+add_subdirectory(bfanalyze)
+if(BF_WITH_CORPUS_DB)
+  add_subdirectory(bfcorpus)
+endif()

@@ -1,0 +1,15 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "preset": {
+    "name": "smoke",
+    "area": "office",
+    "strategy": "balanced",
+    "outputs": { "layout": "stereo" }
+  },
+  "seed": 1001,
+  "durationS": 8,
+  "sampleRate": 48000,
+  "outputFormat": { "container": "wav", "sampleFormat": "float32" },
+  "events": [ { "atS": 4.0, "set": { "macros.character": 0.9 } } ]
+}

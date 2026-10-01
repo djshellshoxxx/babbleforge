@@ -101,6 +101,19 @@ std::vector<std::uint64_t> BabbleEngine::applyReplanNow(const TalkerPlanParams& 
     return discarded;
 }
 
+std::vector<std::uint64_t> BabbleEngine::adoptCorpus(std::shared_ptr<const CorpusSnapshot> snap, const CorpusMigration& map,
+                                                     std::int64_t atSample) {
+    const SegmentSelector old(std::move(*selector_));
+    snap_ = snap;
+    *selector_ = SegmentSelector(snap, old.config());
+    selector_->migrateFrom(old, map);
+    const auto discarded = planner_->adoptSnapshot(std::move(snap), map, atSample);
+    if (!discarded.empty()) renderer_.dropStale(planner_->epoch(), atSample + planner_->freezeSamples());
+    gbnorm_ = computeCountNorm();
+    renderer_.setCountNorm(gbnorm_, atSample);
+    return discarded;
+}
+
 void BabbleEngine::consumeOccupancy() noexcept {
     OccupancyFrame fr;
     while (renderer_.popOccupancy(fr)) {

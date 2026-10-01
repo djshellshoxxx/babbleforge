@@ -3,12 +3,14 @@
 //   BabbleForge [--data-dir <dir>] [--corpus <dir>] [--state-dir <dir>]
 //   BabbleForge --run-ui-tests        headless GUI tests (exit code = failures > 0)
 #include <memory>
+#include <thread>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "LookAndFeel.h"
 #include "MainComponent.h"
 #include "dialogs/FirstRunWizard.h"
+#include "dialogs/LibraryDialogs.h"
 #include "model/Prefs.h"
 #include "core/corpus/CorpusLoader.h"
 
@@ -111,6 +113,8 @@ public:
             }
         }
         bridge_ = std::make_unique<EngineBridge>(o);
+        // The voice library changed on disk (import wizard): the running engine adopts it without a restart.
+        setLibraryChangedHandler([this](const LibraryChange& c) { return reloadLibrary(c); });
         state_ = std::make_unique<AppState>(*data_, *settings_, undo_, bridge_->startupPreset());
         bridge_->attach(*state_);
         session_ = std::make_unique<PresetSession>(*state_, appDir / "user_presets");
@@ -126,6 +130,8 @@ public:
     }
 
     void shutdown() override {
+        setLibraryChangedHandler({});
+        if (reloadThread_.joinable()) reloadThread_.join();
         window_.reset();
         if (bridge_ && settings_) {
             const auto dev = bridge_->deviceId();
@@ -142,6 +148,31 @@ public:
     void systemRequestedQuit() override { quit(); }
 
 private:
+    // Hot reload on a background thread (the control thread loads the library; the UI never blocks). Afterwards
+    // the app keeps the loaded library alive and hands it to the bridge for controllers created later.
+    bool reloadLibrary(const LibraryChange& c) {
+        auto ctl = bridge_ ? bridge_->controller() : nullptr;
+        if (!ctl) return false;
+        if (reloadThread_.joinable()) reloadThread_.join();
+        bf::rt::CorpusReloadOptions opt;
+        opt.migrateState = !c.replaced;
+        auto prevIdentity = std::make_shared<bf::CorpusIdentity>(corpus_.identity);
+        opt.previousIdentity = prevIdentity.get();
+        opt.retirePrevious = corpus_.audio;  // the old source lives until its last event has finished
+        reloadThread_ = std::thread([this, ctl, root = c.root, opt, prevIdentity] {
+            if (ctl->reloadCorpus(root, opt) != bf::rt::CommandResult::Ok) return;
+            juce::MessageManager::callAsync([this, ctl] {
+                if (!bridge_) return;
+                if (const auto lib = ctl->currentLibrary()) {
+                    corpus_ = *lib;
+                    bridge_->setLibrary(corpus_.snapshot, corpus_.audio.get());
+                }
+            });
+        });
+        return true;
+    }
+
+    std::thread reloadThread_;
     std::unique_ptr<BfLookAndFeel> lnf_;
     std::unique_ptr<bf::DataSet> data_;
     bf::LoadedCorpus corpus_;

@@ -150,6 +150,28 @@ private:
     std::vector<PauseRec> pauses_;
 };
 
+// Stable identity of the speakers / recordings of a loaded snapshot (database ids plus content
+// keys), used to carry runtime state across a hot reload (CorpusLoader fills it).
+struct CorpusIdentity {
+    std::vector<std::int64_t> speakerDbId;       // SpeakerId   -> speaker.speaker_id
+    std::vector<std::int64_t> recordingDbId;     // RecordingId -> recording.recording_id
+    std::vector<std::string> speakerExternalId;  // SpeakerId   -> speaker.external_id
+    std::vector<std::string> recordingPcmSha;    // RecordingId -> recording.pcm_sha256
+};
+
+// Index mapping between two snapshots of (nominally) the same library: -1 = absent in the new one.
+// A speaker / recording is the same when its database id and its content key (external id / PCM
+// hash) agree, so a replaced library never inherits state from unrelated recordings.
+struct CorpusMigration {
+    std::vector<std::int32_t> speaker, recording;  // old index -> new index
+    std::size_t keptSpeakers = 0, keptRecordings = 0;
+    SpeakerId mapSpeaker(SpeakerId s) const noexcept { return s < speaker.size() && speaker[s] >= 0 ? static_cast<SpeakerId>(speaker[s]) : kNoSpeaker; }
+    RecordingId mapRecording(RecordingId r) const noexcept { return r < recording.size() && recording[r] >= 0 ? static_cast<RecordingId>(recording[r]) : kNoRecording; }
+    static constexpr SpeakerId kNoSpeaker = 0xFFFFFFFFu;
+    static constexpr RecordingId kNoRecording = 0xFFFFFFFFu;
+};
+CorpusMigration makeCorpusMigration(const CorpusIdentity& from, const CorpusIdentity& to);
+
 // 48 kHz mono float source audio, addressed by RecordingId. Samples outside the recording
 // are written as zeros. Returns false on a read error (missing file, decode failure).
 class IAudioSource {

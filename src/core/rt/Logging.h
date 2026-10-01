@@ -65,6 +65,7 @@ inline constexpr const char* kDeviceRateChange = "device.rateChange";
 inline constexpr const char* kDeviceBufferChange = "device.bufferChange";
 inline constexpr const char* kDeviceOpenFailed = "device.openFailed";
 inline constexpr const char* kCorpusLoaded = "corpus.loaded";
+inline constexpr const char* kCorpusReloadFailed = "corpus.reloadFailed";
 inline constexpr const char* kCorpusFileMissing = "corpus.fileMissing";
 inline constexpr const char* kCorpusDecodeFailed = "corpus.decodeFailed";
 inline constexpr const char* kCorpusReduced = "corpus.reduced";

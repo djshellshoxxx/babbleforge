@@ -1,7 +1,13 @@
 // bfcorpus: offline corpus analyzer / inspector (docs/CORPUS.md §3-§5).
 //   bfcorpus import <inputDir> <corpusRoot> [--speakers speakers.csv] [--speaker-regex RE] [--threads N]
-//                   [--no-source-paths] [--verbose]
+//                   [--no-source-paths] [--add] [--verbose]
+//   bfcorpus remove <corpusRoot> [--speaker id]... [--recording id]...
 //   bfcorpus info <corpusRoot>
+//
+// `import --add` appends the recordings of <inputDir> to the existing corpus (ids and cache files
+// of the existing recordings are kept, duplicates are detected against them, the speaker
+// aggregates, PCA basis and corpusVersion are recomputed). `remove` disables speakers / recordings
+// and rebuilds the corpusVersion.
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -25,7 +31,8 @@ const char* className(int c) { return c == 2 ? "Good" : c == 1 ? "Usable" : "Rej
 void usage() {
     std::cerr << "usage:\n"
                  "  bfcorpus import <inputDir> <corpusRoot> [--speakers speakers.csv] [--speaker-regex RE]\n"
-                 "                  [--threads N] [--no-source-paths] [--verbose]\n"
+                 "                  [--threads N] [--no-source-paths] [--add] [--verbose]\n"
+                 "  bfcorpus remove <corpusRoot> [--speaker id]... [--recording id]...\n"
                  "  bfcorpus info <corpusRoot>\n";
 }
 
@@ -49,6 +56,7 @@ int cmdImport(int argc, char** argv) {
         else if (a == "--speaker-regex") { const char* v = val(); if (!v) { usage(); return 2; } opt.speakerRegex = v; }
         else if (a == "--threads") { const char* v = val(); if (!v) { usage(); return 2; } opt.threads = std::atoi(v); }
         else if (a == "--no-source-paths") opt.storeSourcePaths = false;
+        else if (a == "--add") opt.addToExisting = true;
         else if (a == "--verbose") verbose = true;
         else { std::cerr << "unknown option: " << a << "\n"; usage(); return 2; }
     }
@@ -65,10 +73,31 @@ int cmdImport(int argc, char** argv) {
         std::printf("%-8s %-40s q=%5.1f snr=%5.1f dB asl=%6.1f dBFS  %s\n",
                     className(static_cast<int>(f.cls)), f.relPath.c_str(), f.qualityScore, f.snrDb, f.aslDb, reasons.c_str());
     }
+    if (r.added)
+        std::printf("added to existing corpus (previous version %s): %zu new speakers, %zu recordings in total\n",
+                    r.previousVersion.c_str(), r.nNewSpeakers, r.nTotalFiles);
     std::printf("corpusVersion %s\nfiles %zu: good %zu, usable %zu, rejected %zu; speakers %zu (%zu usable)\n"
                 "duration %s, usable %s, usable speech %s\n",
                 r.corpusVersion.c_str(), r.files.size(), r.nGood, r.nUsable, r.nRejected, r.nSpeakers,
                 r.nUsableSpeakers, hms(r.totalS).c_str(), hms(r.usableS).c_str(), hms(r.usableSpeechS).c_str());
+    return 0;
+}
+
+int cmdRemove(int argc, char** argv) {
+    if (argc < 3) { usage(); return 2; }
+    bf::RemoveOptions opt;
+    opt.corpusRoot = argv[2];
+    for (int i = 3; i < argc; ++i) {
+        const std::string a = argv[i];
+        auto val = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
+        if (a == "--speaker") { const char* v = val(); if (!v) { usage(); return 2; } opt.speakers.emplace_back(v); }
+        else if (a == "--recording") { const char* v = val(); if (!v) { usage(); return 2; } opt.recordings.push_back(std::atoll(v)); }
+        else { std::cerr << "unknown option: " << a << "\n"; usage(); return 2; }
+    }
+    const auto r = bf::removeFromCorpus(opt);
+    if (!r.ok) { std::cerr << "remove failed: " << r.error << "\n"; return 1; }
+    std::printf("removed %zu speakers, %zu recordings\nversion %s -> %s; speakers %zu (%zu usable)\n", r.speakersRemoved,
+                r.recordingsRemoved, r.previousVersion.c_str(), r.corpusVersion.c_str(), r.nSpeakers, r.nUsableSpeakers);
     return 0;
 }
 
@@ -135,6 +164,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { usage(); return 2; }
     const std::string cmd = argv[1];
     if (cmd == "import") return cmdImport(argc, argv);
+    if (cmd == "remove") return cmdRemove(argc, argv);
     if (cmd == "info") return cmdInfo(argc, argv);
     usage();
     return 2;

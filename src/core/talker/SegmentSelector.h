@@ -92,6 +92,16 @@ public:
     double featureDistance(SpeakerId a, SpeakerId b) const;
     const CorpusSnapshot& snapshot() const noexcept { return *snap_; }
 
+    // Hot reload: adopts the state of `old` (a selector over the previous snapshot) after the
+    // snapshot was replaced. Speakers / recordings / anchors that still exist (CorpusMigration)
+    // keep their shuffle position, cycle, last-use times and cooldown regions; entries of
+    // speakers, recordings or anchors that are gone are dropped, anchors that are new to a kept
+    // speaker are inserted at random positions of the remaining cycle, new speakers start fresh.
+    // The pool keeps its surviving members and is topped up from this selector's own pool
+    // (new speakers are preferred; at most ceil(P / 4) least recently used members make room).
+    void migrateFrom(const SegmentSelector& old, const CorpusMigration& map);
+    const SelectorConfig& config() const noexcept { return cfg_; }
+
     // Persistence (non-deterministic mode, §6.3): shuffle (cycle, position, permutation),
     // speaker usage and the global cooldown table; times stored relative to `now`.
     nlohmann::json exportState(std::int64_t now) const;

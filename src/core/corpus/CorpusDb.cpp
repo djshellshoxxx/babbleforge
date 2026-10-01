@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "core/corpus/CorpusDb.h"
+#include "core/corpus/FlacCache.h"
 
 #include <sqlite3.h>
 
@@ -406,6 +407,7 @@ int CorpusDb::purgeOldCaches(const std::string& root) {
     std::sort(gens.begin(), gens.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second > b.second; });
     int removed = 0;
     for (std::size_t i = 1; i < gens.size(); ++i) {
+        if (FlacCacheAudioSource::isPinned(gens[i].second)) continue;  // a live source still reads from it
         ec.clear();
         fs::remove_all(gens[i].second, ec);
         if (!ec) ++removed;

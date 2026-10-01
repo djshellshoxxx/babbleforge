@@ -87,6 +87,15 @@ public:
     // discarded (ids returned), epoch++, RNG streams re-derived from (seed, epoch, plan hash).
     std::vector<std::uint64_t> replan(const TalkerPlanParams& params, std::int64_t now);
 
+    // Hot reload: switches the planner to a new corpus snapshot at `now` (the selector it was
+    // constructed with must already hold the new snapshot, see SegmentSelector::migrateFrom).
+    // Events starting before now + 0.5 s are kept (they play on the old recordings), later ones are
+    // discarded (ids returned) and re-planned from the new pool; slot speakers of the fixed-speaker
+    // modes and the speaker ids of the kept events are translated, unknown ones dropped. Counts as a
+    // plan epoch (replan()).
+    std::vector<std::uint64_t> adoptSnapshot(std::shared_ptr<const CorpusSnapshot> snap, const CorpusMigration& map,
+                                             std::int64_t now);
+
     const std::vector<PlannedEvent>& events() const noexcept { return events_; }
     // Appends events committed since the last call.
     std::size_t takeNew(std::vector<PlannedEvent>& out);

@@ -41,6 +41,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -48,6 +49,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/config/DataSet.h"
+#include "core/corpus/CorpusLoader.h"
 #include "core/rt/AudioBackend.h"
 #include "core/rt/Diagnostics.h"
 #include "core/rt/EngineState.h"
@@ -85,6 +87,16 @@ struct EngineControllerConfig {
     double commandTimeoutS = 10.0;
 };
 
+struct CorpusReloadOptions {
+    bool migrateState = true;  // false: "Replace" (unrelated library) - the selector starts fresh
+    // Identity of the snapshot the controller was configured with (needed for the first reload only
+    // when the library was loaded outside the controller; later reloads use the one it loaded).
+    const CorpusIdentity* previousIdentity = nullptr;
+    // Keeps whatever owns the previous audio source alive until the last event of the old library
+    // has finished (e.g. the LoadedCorpus::audio the caller loaded the first library with).
+    std::shared_ptr<void> retirePrevious;
+};
+
 class EngineController {
 public:
     explicit EngineController(EngineControllerConfig cfg);
@@ -100,6 +112,22 @@ public:
     CommandResult reset();
     CommandResult setPreset(const nlohmann::json& presetDoc);  // "setPlan"
     CommandResult setStrength(double db);
+
+    // Voice library hot reload (no restart). The control thread loads the library at `root`
+    // (CorpusDb + FLAC cache) off the real-time path and the running engine adopts the new snapshot
+    // at the planner's next plan epoch: events that already started finish on the old recordings
+    // (their generation, including the cache files, stays alive until the last reader is gone), new
+    // events are planned from the new pool, the selector state migrates (anchors / recordings /
+    // speakers that no longer exist are dropped). A stopped engine just takes the new library for the
+    // next start; an engine whose plan depends on the library (reduced plan, previously no library)
+    // is rebuilt (STOPPING -> PREPARING). Logs corpus.loaded with the new version.
+    CommandResult reloadCorpus(const std::filesystem::path& root, const CorpusReloadOptions& opt = {});
+    CommandResult adoptCorpus(LoadedCorpus loaded, const CorpusReloadOptions& opt = {});  // already loaded
+    std::string corpusVersion() const;  // version of the library the controller currently uses
+    // The library loaded by the last reload (owns its audio source), null before the first reload.
+    std::shared_ptr<const LoadedCorpus> currentLibrary() const;
+    std::uint64_t corpusAdoptions() const;                              // hot reloads the running engine has applied
+    std::set<SpeakerId> plannedSpeakers(std::uint64_t generation) const;  // see RealtimeEngine::plannedSpeakers
     // Output sample rate / buffer size (GUI OUTPUT > Advanced). Stored in the configuration; while
     // READY / STARTING / RUNNING / DEGRADED it rebuilds (STOPPING with fade -> PREPARING). Other
     // states only store the values for the next prepare. InvalidArgument for rate <= 0 / buffer < 16.
@@ -152,6 +180,7 @@ private:
     bool go(EngineState to, const std::string& reason, const std::string& detail = {});
     void pushStatus(EngineState prev, EngineState now, const std::string& detail, std::vector<std::string> newCodes);
 
+    CommandResult applyCorpus(LoadedCorpus&& loaded, const CorpusReloadOptions& opt);
     void doPrepare();
     void doPlay();
     void beginStop(bool rebuild, const std::string& reason, bool immediate);
@@ -201,6 +230,12 @@ private:
     std::string deviceType_;
     int bufferFrames_ = 0, deviceOutputs_ = 0;
     std::uint64_t planEpoch_ = 0;
+
+    // Voice library (control thread writes; other threads read through corpusPtr()).
+    std::shared_ptr<LoadedCorpus> loadedCorpus_;       // library loaded by reloadCorpus (owns the audio source)
+    std::optional<CorpusIdentity> corpusIdentity_;
+    mutable CheckedMutex corpusMutex_;
+    std::shared_ptr<const CorpusSnapshot> corpusPtr() const;
 
     // Engine (created / destroyed on the control thread; readers lock engineMutex_).
     mutable CheckedMutex engineMutex_;

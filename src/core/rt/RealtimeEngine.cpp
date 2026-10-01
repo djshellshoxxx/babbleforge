@@ -18,10 +18,42 @@ std::int64_t readyNeed(const TalkerEvent& ev, std::int64_t len, std::int64_t fsB
     return std::min(len, std::max(ev.fadeInLen + fsB, static_cast<std::int64_t>(1.25 * static_cast<double>(fsB))));
 }
 
+// Serialises the reads of a source that is not thread-safe (new generations after a hot reload).
+class SharedLockedSource final : public IAudioSource {
+public:
+    explicit SharedLockedSource(std::shared_ptr<IAudioSource> in) : in_(std::move(in)) {}
+    bool read(RecordingId rec, std::uint64_t start, float* dst, std::size_t n) override {
+        std::lock_guard<std::mutex> lk(m_);
+        return in_->read(rec, start, dst, n);
+    }
+
+private:
+    std::shared_ptr<IAudioSource> in_;
+    std::mutex m_;
+};
+
 void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(std::max(ms, 1))); }
 }  // namespace
 
+// One corpus snapshot with the audio source of its cache files. Jobs (running / queued events) hold the
+// generation they were planned from: it stays alive (so does its cache lease) until the last of them is gone.
+struct RealtimeEngine::Generation {
+    std::shared_ptr<const CorpusSnapshot> snap;
+    std::shared_ptr<IAudioSource> audio;  // serialised if the raw source is not thread-safe
+    std::shared_ptr<void> owner;          // keeps the loaded corpus (FlacCacheAudioSource) alive
+    std::shared_ptr<void> retired;        // released together with the generation (set when replaced)
+};
+
+struct RealtimeEngine::PendingAdoption {
+    std::shared_ptr<const CorpusSnapshot> snap;
+    std::shared_ptr<IAudioSource> audio;
+    bool threadSafe = false;
+    CorpusMigration migration;
+    std::shared_ptr<void> retirePrevious;
+};
+
 struct RealtimeEngine::Job {
+    std::shared_ptr<Generation> gen;
     PlannedEvent pe;
     BlockChain* chain = nullptr;
     std::int64_t chainOffset = 0;
@@ -112,6 +144,17 @@ bool RealtimeEngine::prepare(double fs, const OutputLayout& layout, int deviceOu
     for (auto& b : loadHist_) b.store(0, std::memory_order_relaxed);
     loadMax_.store(0.0f, std::memory_order_relaxed);
 
+    gen_ = std::make_shared<Generation>();
+    gen_->snap = mc.corpus;
+    if (mc.audio) gen_->audio = std::shared_ptr<IAudioSource>(std::shared_ptr<void>(), mc.audio);  // not owned
+    {
+        std::lock_guard<std::mutex> lk(adoptMutex_);
+        adoptQueue_.clear();
+        plannedSpeakers_.clear();
+        adoptedVersion_ = mc.corpus ? mc.corpus->corpusVersion() : std::string();
+    }
+    adoptions_.store(0, std::memory_order_release);
+    adoptPending_.store(false, std::memory_order_release);
     {
         std::lock_guard<CheckedMutex> lk(jobsMutex_);
         jobs_.clear();
@@ -176,6 +219,11 @@ void RealtimeEngine::release() {
         jobs_.clear();
         freeChains_.clear();
     }
+    {
+        std::lock_guard<std::mutex> lk(adoptMutex_);
+        adoptQueue_.clear();
+    }
+    gen_.reset();
     engine_.reset();
     tapSink_.reset();
     locked_.reset();
@@ -344,18 +392,19 @@ void RealtimeEngine::decodeLoop(bool urgent, int index) {
     static const char* const names[] = {"bf.preload.0", "bf.preload.1", "bf.preload.2", "bf.preload.3"};
     setCurrentThreadName(urgent ? "bf.preload.u" : names[std::clamp(index, 0, 3)]);
     BlockPool& pool = engine_->babbleMutable()->pool();
-    SourcePreparer prep(*audio_);
     std::vector<float> buf(BlockPool::kBlockSize);
     while (!quit_.load(std::memory_order_acquire)) {
         const std::int64_t nowB = babbleNow();
         Job* j = nullptr;
         std::shared_ptr<const ProcessedLayout> layout;
+        std::shared_ptr<Generation> gen;
         std::int64_t from = 0;
         std::size_t k = 0;
         {
             std::lock_guard<CheckedMutex> lk(jobsMutex_);
             j = pickJob(urgent, nowB);
             if (j) {
+                gen = j->gen;
                 layout = j->pe.layout;
                 const auto w = static_cast<std::int64_t>(j->chain->written());
                 from = j->chainOffset + w;
@@ -368,8 +417,12 @@ void RealtimeEngine::decodeLoop(bool urgent, int index) {
         }
         const std::int64_t t0 = monotonicMicros();
         bool ok = true;
-        if (layout)
+        if (layout) {
+            // The event's own generation: its source reads the cache files of the snapshot it was planned from.
+            IAudioSource* src = gen && gen->audio ? gen->audio.get() : audio_;
+            SourcePreparer prep(*src);
             ok = prep.render(*layout, from, buf.data(), k);
+        }
         else
             std::fill(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(k), 0.0f);
         const std::int64_t dt = monotonicMicros() - t0;
@@ -424,6 +477,10 @@ void RealtimeEngine::substituteFailed(std::int64_t nowB) {
         if (j.pushed) {  // RT owns the voice: it will start late / starve and fade out
             j.failed = false;
             j.dead = true;
+            continue;
+        }
+        if (j.gen != gen_) {  // planned from a replaced corpus generation: drop it, the new plan fills the gap
+            releaseJobLocked(i);
             continue;
         }
         if (j.substitutions >= 4 || j.pe.ev.endSample <= nowB) {
@@ -511,6 +568,72 @@ void RealtimeEngine::adaptLoad(std::int64_t nowB, std::int64_t nowUs) {
              {{"medianS", next.medianS}, {"discardedEvents", discarded.size()}});
 }
 
+bool RealtimeEngine::adoptCorpus(std::shared_ptr<const CorpusSnapshot> snap, std::shared_ptr<IAudioSource> audio,
+                                 bool audioThreadSafe, CorpusMigration migration, std::shared_ptr<void> retirePrevious) {
+    if (!engine_ || !babble_ || !snap || !audio) return false;
+    PendingAdoption a;
+    a.snap = std::move(snap);
+    a.audio = std::move(audio);
+    a.threadSafe = audioThreadSafe;
+    a.migration = std::move(migration);
+    a.retirePrevious = std::move(retirePrevious);
+    std::lock_guard<std::mutex> lk(adoptMutex_);
+    adoptQueue_.push_back(std::move(a));
+    adoptPending_.store(true, std::memory_order_release);
+    return true;
+}
+
+std::set<SpeakerId> RealtimeEngine::plannedSpeakers(std::uint64_t generation) const {
+    std::lock_guard<std::mutex> lk(adoptMutex_);
+    const auto it = plannedSpeakers_.find(generation);
+    return it == plannedSpeakers_.end() ? std::set<SpeakerId>{} : it->second;
+}
+
+std::string RealtimeEngine::corpusVersion() const {
+    std::lock_guard<std::mutex> lk(adoptMutex_);
+    return adoptedVersion_;
+}
+
+void RealtimeEngine::applyAdoption(PendingAdoption&& a, std::int64_t nowB) {
+    BabbleEngine* be = engine_->babbleMutable();
+    auto gen = std::make_shared<Generation>();
+    gen->snap = a.snap;
+    gen->owner = a.audio;
+    gen->audio = (a.threadSafe || cfg_.audioSourceThreadSafe) ? a.audio : std::make_shared<SharedLockedSource>(a.audio);
+    const std::size_t oldSpeakers = be->snapshot().numSpeakers();
+    const auto discarded = be->adoptCorpus(a.snap, a.migration, nowB);
+    // Events that have not been handed to RT yet and were re-planned: free their chains (pushed ones
+    // are dropped by the renderer: stale epoch). Everything else keeps its old generation.
+    for (std::size_t i = 0; i < jobs_.size(); ++i) {
+        Job& j = *jobs_[i];
+        if (j.done || j.pushed) continue;
+        if (std::find(discarded.begin(), discarded.end(), j.pe.ev.eventId) == discarded.end()) continue;
+        if (j.busy)
+            j.retired = true;
+        else
+            releaseJobLocked(i);
+    }
+    if (gen_) gen_->retired = std::move(a.retirePrevious);
+    gen_ = std::move(gen);
+    unhealthy_.clear();
+    determinismBroken_.store(true, std::memory_order_relaxed);  // the timeline now depends on the reload moment
+    const std::string version = a.snap->corpusVersion();
+    {
+        std::lock_guard<std::mutex> lk(adoptMutex_);
+        adoptedVersion_ = version;
+    }
+    adoptions_.fetch_add(1, std::memory_order_release);
+    logEvent(LogLevel::Info, logcode::kCorpusLoaded, "voice library reloaded without restart",
+             {{"corpusVersion", version},
+              {"speakers", a.snap->numSpeakers()},
+              {"recordings", a.snap->numRecordings()},
+              {"previousSpeakers", oldSpeakers},
+              {"keptSpeakers", a.migration.keptSpeakers},
+              {"keptRecordings", a.migration.keptRecordings},
+              {"replannedEvents", discarded.size()},
+              {"reload", true}});
+}
+
 void RealtimeEngine::plannerStep() {
     BabbleEngine* be = engine_->babbleMutable();
     if (!be) return;
@@ -550,6 +673,21 @@ void RealtimeEngine::plannerStep() {
         }
     }
 
+    if (adoptPending_.load(std::memory_order_acquire)) {
+        for (;;) {
+            PendingAdoption a;
+            {
+                std::lock_guard<std::mutex> al(adoptMutex_);
+                if (adoptQueue_.empty()) {
+                    adoptPending_.store(false, std::memory_order_release);
+                    break;
+                }
+                a = std::move(adoptQueue_.front());
+                adoptQueue_.pop_front();
+            }
+            applyAdoption(std::move(a), nowB);
+        }
+    }
     substituteFailed(nowB);
     adaptLoad(nowB, monotonicMicros());
 
@@ -566,12 +704,17 @@ void RealtimeEngine::plannerStep() {
             continue;
         }
         auto job = std::make_unique<Job>();
+        job->gen = gen_;
         job->chain = freeChains_.back();
         freeChains_.pop_back();
         job->chainOffset = std::max<std::int64_t>(0, nowB - pe.ev.startSample);
         job->len = pe.ev.length() - job->chainOffset;
         job->chain->reset(static_cast<std::uint64_t>(job->len));
         job->needSinceUs = nowUs;
+        {
+            std::lock_guard<std::mutex> al(adoptMutex_);
+            plannedSpeakers_[adoptions_.load(std::memory_order_relaxed)].insert(pe.ev.speaker);
+        }
         job->pe = std::move(pe);
         jobs_.push_back(std::move(job));
     }

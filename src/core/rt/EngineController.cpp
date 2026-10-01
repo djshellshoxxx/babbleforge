@@ -412,6 +412,97 @@ CommandResult EngineController::setStrength(double db) {
     return setPreset(doc);
 }
 
+std::shared_ptr<const CorpusSnapshot> EngineController::corpusPtr() const {
+    std::lock_guard<CheckedMutex> lk(corpusMutex_);
+    return cfg_.corpus;
+}
+
+std::shared_ptr<const LoadedCorpus> EngineController::currentLibrary() const {
+    std::lock_guard<CheckedMutex> lk(corpusMutex_);
+    return loadedCorpus_;
+}
+
+std::string EngineController::corpusVersion() const {
+    const auto c = corpusPtr();
+    return c ? c->corpusVersion() : std::string();
+}
+
+std::uint64_t EngineController::corpusAdoptions() const {
+    std::lock_guard<CheckedMutex> lk(engineMutex_);
+    return engine_ ? engine_->corpusAdoptions() : 0;
+}
+
+std::set<SpeakerId> EngineController::plannedSpeakers(std::uint64_t generation) const {
+    std::lock_guard<CheckedMutex> lk(engineMutex_);
+    return engine_ ? engine_->plannedSpeakers(generation) : std::set<SpeakerId>{};
+}
+
+CommandResult EngineController::reloadCorpus(const std::filesystem::path& root, const CorpusReloadOptions& opt) {
+    return call([this, root, opt] {
+        LoadedCorpus lc;
+        std::string err;
+        if (!loadCorpus(root, lc, &err)) {
+            log_->log(LogLevel::Warn, logcode::kCorpusReloadFailed, "voice library could not be reloaded",
+                      {{"error", err}, {"root", cfg_.redactPathsInExports ? std::string("<redacted>") : root.string()}});
+            return CommandResult::Failed;
+        }
+        return applyCorpus(std::move(lc), opt);
+    });
+}
+
+CommandResult EngineController::adoptCorpus(LoadedCorpus loaded, const CorpusReloadOptions& opt) {
+    auto box = std::make_shared<LoadedCorpus>(std::move(loaded));
+    return call([this, box, opt] { return applyCorpus(std::move(*box), opt); });
+}
+
+CommandResult EngineController::applyCorpus(LoadedCorpus&& lc, const CorpusReloadOptions& opt) {
+    if (!lc.snapshot || !lc.audio) return CommandResult::InvalidArgument;
+    auto loaded = std::make_shared<LoadedCorpus>(std::move(lc));
+    const auto previous = cfg_.corpus;
+    CorpusMigration mig;
+    if (opt.migrateState && previous) {
+        const CorpusIdentity* prev = corpusIdentity_ ? &*corpusIdentity_ : opt.previousIdentity;
+        if (prev) mig = makeCorpusMigration(*prev, loaded->identity);
+    }
+    // Whatever owned the previous audio source stays alive until the last event of the old library ends.
+    std::shared_ptr<void> retire = loadedCorpus_ ? std::shared_ptr<void>(loadedCorpus_) : opt.retirePrevious;
+    {
+        std::lock_guard<CheckedMutex> lk(corpusMutex_);
+        cfg_.corpus = loaded->snapshot;
+        cfg_.audio = loaded->audio.get();
+        cfg_.audioThreadSafe = true;  // FlacCacheAudioSource serialises its own reads
+    }
+    {
+        std::lock_guard<CheckedMutex> lk(corpusMutex_);
+        loadedCorpus_ = loaded;
+    }
+    corpusIdentity_ = loaded->identity;
+    sessionDirty_ = true;
+
+    const nlohmann::json info = {{"corpusVersion", loaded->snapshot->corpusVersion()},
+                                 {"previousVersion", previous ? previous->corpusVersion() : std::string()},
+                                 {"speakers", loaded->snapshot->numSpeakers()},
+                                 {"recordings", loaded->snapshot->numRecordings()},
+                                 {"reload", true}};
+    const EngineState s = sm_.state();
+    const bool live = (s == EngineState::Ready || masking(s)) && engine_ && engine_->prepared() && havePlan_ && cfg_.dataSet;
+    if (!live) {  // the next start uses the new library
+        log_->log(LogLevel::Info, logcode::kCorpusLoaded, "voice library loaded", info);
+        return CommandResult::Ok;
+    }
+    // The plan is built against the library (speaker counts, reduced plans): a different outcome needs a rebuild.
+    const ScenarioPlan sp = buildScenarioPlan(*cfg_.dataSet, preset_, std::nullopt, corpusSummary(), seed_);
+    bool hot = sp.ok && engine_->metrics().babble && sp.plan.planHash == basePlan_.planHash;
+    if (hot) {
+        const FallbackOutcome fo = applyFallback(sp.plan, fs_.load());
+        hot = fo.errorCode.empty() && fo.plan.planHash == plan_.planHash;
+    }
+    if (hot && engine_->adoptCorpus(loaded->snapshot, loaded->audio, true, std::move(mig), std::move(retire))) return CommandResult::Ok;
+    log_->log(LogLevel::Info, logcode::kCorpusLoaded, "voice library changed: rebuilding the engine", info);
+    beginStop(true, "voice library changed", false);
+    return CommandResult::Ok;
+}
+
 CommandResult EngineController::setAudioFormat(double sampleRate, int bufferFrames) {
     if (!(sampleRate > 0.0) || bufferFrames < 16) return CommandResult::InvalidArgument;
     return call([this, sampleRate, bufferFrames] {
@@ -964,7 +1055,8 @@ nlohmann::json EngineController::diagnostics() const {
     in.degradedReasons = degradedReasons();
     in.uptimeS = nowS();
     in.sessionSeed = seed_;
-    in.corpusVersion = cfg_.corpus ? cfg_.corpus->corpusVersion() : std::string();
+    const auto corpus = corpusPtr();
+    in.corpusVersion = corpus ? corpus->corpusVersion() : std::string();
     in.dataSetHash = cfg_.dataSet ? cfg_.dataSet->dataSetHash : std::string();
     OutputLayout layout;
     {
@@ -986,9 +1078,9 @@ nlohmann::json EngineController::diagnostics() const {
     in.pool = plan.babbleEnabled ? static_cast<int>(plan.talkers.pool) : 0;
     in.limiterEnabled = plan.level.limiterEnabled;
     in.limiterCeilingDbtp = plan.level.limiterCeilingDbtp;
-    if (cfg_.corpus) {
-        in.corpusSpeakers = static_cast<int>(cfg_.corpus->numSpeakers());
-        in.usableSpeechH = cfg_.corpus->totalSpeechSeconds() / 3600.0;
+    if (corpus) {
+        in.corpusSpeakers = static_cast<int>(corpus->numSpeakers());
+        in.usableSpeechH = corpus->totalSpeechSeconds() / 3600.0;
     }
     {
         std::lock_guard<CheckedMutex> lk(engineMutex_);

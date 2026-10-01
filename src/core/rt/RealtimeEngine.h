@@ -22,8 +22,11 @@
 // after it `determinismBroken` is set (TALKER_ENGINE.md §8.3).
 #include <array>
 #include <atomic>
+#include <mutex>
+#include <set>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -110,6 +113,22 @@ public:
     bool fadeComplete() const noexcept;  // FadeIn reached On / FadeOut reached silence
     void setXrunSource(const IAudioBackend* backend) noexcept { backend_.store(backend, std::memory_order_release); }
 
+    // Hot reload (control thread): switches the babble engine to a new corpus without a restart.
+    // The planner thread adopts the snapshot at its next step (a plan epoch: events starting within
+    // 0.5 s keep playing on the old recordings, later ones are re-planned from the new pool, the
+    // selector state migrates by `migration`). Running events keep reading their own generation's
+    // audio source (kept alive by refcount, so its cache files stay readable) until they end;
+    // `retirePrevious` (optional) is attached to the generation being replaced and released with it
+    // (e.g. the owner of the old FlacCacheAudioSource). `audioThreadSafe`: the source serialises
+    // its own reads. Returns false without a babble corpus. Logs corpus.loaded when adopted.
+    bool adoptCorpus(std::shared_ptr<const CorpusSnapshot> snap, std::shared_ptr<IAudioSource> audio, bool audioThreadSafe,
+                     CorpusMigration migration, std::shared_ptr<void> retirePrevious = {});
+    std::uint64_t corpusAdoptions() const noexcept { return adoptions_.load(std::memory_order_acquire); }
+    std::string corpusVersion() const;  // snapshot version the planner currently plans from
+    // Speakers of the events planned from corpus generation `g` (0 = the library the engine was
+    // prepared with, +1 per adoption); introspection for tests and diagnostics.
+    std::set<SpeakerId> plannedSpeakers(std::uint64_t generation) const;
+
     // Live parameters (any thread).
     void setStrengthDb(double db) noexcept;
     void setBabbleFraction(double b) noexcept;
@@ -131,6 +150,8 @@ public:
 
 private:
     struct Job;
+    struct Generation;
+    struct PendingAdoption;
     class TapSink;
 
     void plannerLoop();
@@ -148,6 +169,7 @@ private:
     std::int64_t jobDeadline(const Job& j) const noexcept;
     void logEvent(LogLevel l, const char* code, std::string msg, nlohmann::json data = nlohmann::json::object());
     void stopServices();
+    void applyAdoption(PendingAdoption&& a, std::int64_t nowB);  // planner thread, service + job locks held
 
     RealtimeEngineConfig cfg_;
     std::unique_ptr<LockedAudioSource> locked_;
@@ -187,6 +209,13 @@ private:
     mutable CheckedMutex jobsMutex_;          // job table, free chains, health set
     mutable CheckedMutex poolMutex_;          // BlockPool free list (writers)
     std::vector<std::unique_ptr<Job>> jobs_;  // start order
+    std::shared_ptr<Generation> gen_;         // current corpus generation (planner thread; jobs hold their own)
+    mutable std::mutex adoptMutex_;
+    std::deque<PendingAdoption> adoptQueue_;  // guarded by adoptMutex_
+    std::string adoptedVersion_;              // guarded by adoptMutex_
+    std::map<std::uint64_t, std::set<SpeakerId>> plannedSpeakers_;  // guarded by adoptMutex_
+    std::atomic<bool> adoptPending_{false};
+    std::atomic<std::uint64_t> adoptions_{0};
     std::vector<BlockChain*> freeChains_;
     std::vector<RecordingId> unhealthy_;
     std::vector<PlannedEvent> newEvents_;

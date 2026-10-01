@@ -9,6 +9,7 @@
 
 #include "LookAndFeel.h"
 #include "core/corpus/CorpusDb.h"
+#include "core/corpus/FlacCache.h"
 #include "model/Prefs.h"
 
 namespace bf::gui {
@@ -47,6 +48,27 @@ LibraryStatus readLibraryStatus(const fs::path& root) {
     return s;
 }
 
+// ---- library change notification -------------------------------------------------------------------
+
+namespace {
+std::mutex& handlerMutex() { static std::mutex m; return m; }
+LibraryChangedHandler& handlerSlot() { static LibraryChangedHandler h; return h; }
+}  // namespace
+
+void setLibraryChangedHandler(LibraryChangedHandler handler) {
+    std::lock_guard<std::mutex> lk(handlerMutex());
+    handlerSlot() = std::move(handler);
+}
+
+bool notifyLibraryChanged(const LibraryChange& change) {
+    LibraryChangedHandler h;
+    {
+        std::lock_guard<std::mutex> lk(handlerMutex());
+        h = handlerSlot();
+    }
+    return h ? h(change) : false;
+}
+
 // ---- background import --------------------------------------------------------------------------
 
 struct CorpusImportJob::State {
@@ -60,13 +82,15 @@ CorpusImportJob::CorpusImportJob() : st_(std::make_shared<State>()) {}
 
 CorpusImportJob::~CorpusImportJob() { st_->cancel.store(true); }
 
-void CorpusImportJob::start(fs::path inputDir, fs::path stagingRoot) {
+void CorpusImportJob::start(fs::path inputDir, fs::path stagingRoot, fs::path baseRoot, bool addToExisting) {
     if (st_->started.exchange(true)) return;
     auto st = st_;
-    std::thread([st, inputDir = std::move(inputDir), stagingRoot = std::move(stagingRoot)] {
+    std::thread([st, inputDir = std::move(inputDir), stagingRoot = std::move(stagingRoot), baseRoot = std::move(baseRoot), addToExisting] {
         ImportOptions opt;
         opt.inputDir = inputDir;
         opt.corpusRoot = stagingRoot;
+        opt.baseRoot = baseRoot;
+        opt.addToExisting = addToExisting;
         opt.cancel = &st->cancel;
         const unsigned hw = std::thread::hardware_concurrency();
         opt.threads = static_cast<int>(std::max(1u, hw > 2 ? hw - 2 : 1u));
@@ -125,9 +149,11 @@ bool installImport(const fs::path& staging, const fs::path& root, std::string* e
             v.erase(std::remove_if(v.begin(), v.end(), [](unsigned char ch) { return !std::isalnum(ch); }), v.end());
             if (!v.empty()) oldVersion = v;
         }
-        const fs::path oldCache = root / ("cache.old-" + oldVersion);
+        fs::path oldCache = root / ("cache.old-" + oldVersion);
+        for (int n = 2; FlacCacheAudioSource::isPinned(oldCache) && n < 1000; ++n)  // never replace a generation a running engine reads
+            oldCache = root / ("cache.old-" + oldVersion + "-" + std::to_string(n));
         fs::remove_all(oldCache, ec);
-        fs::rename(root / "cache", oldCache, ec);
+        FlacCacheAudioSource::retireCacheDir(root / "cache", oldCache, ec);  // a running engine keeps reading its files
         if (ec) return fail("The current library is in use and cannot be replaced: " + ec.message());
     }
     ec.clear();
@@ -179,7 +205,7 @@ ImportWizard::ImportWizard(AppSettings& settings, fs::path libraryRoot, fs::path
     staging_ = root_.parent_path() / (root_.filename().string() + ".import");
     hint_.setText("Choose the folder that contains your voice recordings (WAV, AIFF or FLAC). Speakers are taken from the "
                   "file names (name_001.wav). BabbleForge checks speech, clipping, silence, level, sample rate and duplicates "
-                  "automatically.\n\nAdding a folder replaces the current library with its contents.",
+                  "automatically.\n\nNew recordings are added to your library; recordings that are already in it are skipped.",
                   juce::dontSendNotification);
     hint_.setFont(fonts::body(14.0f));
     hint_.setColour(juce::Label::textColourId, t.textDim);
@@ -197,6 +223,8 @@ ImportWizard::ImportWizard(AppSettings& settings, fs::path libraryRoot, fs::path
         std::error_code ec;
         next_.setEnabled(fs::is_directory(input_, ec));
     };
+    replaceToggle_.setTooltip("Throw the current library away and use only the recordings of this folder.");
+    replaceToggle_.onClick = [this] { replace_ = replaceToggle_.getToggleState(); };
     detailsText_.setMultiLine(true, false);
     detailsText_.setReadOnly(true);
     detailsText_.setFont(fonts::body(12.5f));
@@ -222,7 +250,7 @@ ImportWizard::ImportWizard(AppSettings& settings, fs::path libraryRoot, fs::path
         resized();
     };
     details_.setTooltip("Technical details for each file: quality class and the reasons for it.");
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&hint_, &status_, &summary_, &path_, &choose_, &next_, &cancel_, &details_, &bar_, &detailsText_})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&hint_, &status_, &summary_, &path_, &choose_, &next_, &cancel_, &details_, &bar_, &detailsText_, &replaceToggle_})
         addChildComponent(c);
     path_.setText(fromPath(input_), juce::dontSendNotification);
     next_.setTooltip("Analyse the recordings in the background.");
@@ -262,7 +290,7 @@ void ImportWizard::setInputDir(const fs::path& dir) {
 
 void ImportWizard::goTo(Step s) {
     step_ = s;
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&hint_, &status_, &summary_, &path_, &choose_, &next_, &cancel_, &details_, &bar_, &detailsText_})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&hint_, &status_, &summary_, &path_, &choose_, &next_, &cancel_, &details_, &bar_, &detailsText_, &replaceToggle_})
         c->setVisible(false);
     status_.setVisible(true);
     cancel_.setVisible(true);
@@ -272,6 +300,7 @@ void ImportWizard::goTo(Step s) {
         hint_.setVisible(true);
         path_.setVisible(true);
         choose_.setVisible(true);
+        replaceToggle_.setVisible(true);
         next_.setVisible(true);
         next_.setButtonText("Analyze");
         cancel_.setButtonText("Cancel");
@@ -285,7 +314,7 @@ void ImportWizard::goTo(Step s) {
         details_.setVisible(true);
         next_.setVisible(true);
         next_.setEnabled(true);
-        next_.setButtonText("Add to Library");
+        next_.setButtonText(replace_ ? "Replace Library" : "Add to Library");
         cancel_.setButtonText("Cancel");
         details_.setButtonText("Show details");
         break;
@@ -313,8 +342,15 @@ void ImportWizard::startAnalysis() {
     progress_ = 0.0;
     status_.setText("Looking for audio files...", juce::dontSendNotification);
     goTo(Analyze);
-    job_->start(input_, staging_);
+    // Add (default): the merged library (existing recordings + the new ones) is built next to the library;
+    // Replace: only the new folder. Nothing is installed before the Review step is confirmed.
+    job_->start(input_, staging_, root_, !replace_);
     startTimerHz(10);
+}
+
+void ImportWizard::setReplaceLibrary(bool replace) {
+    replace_ = replace;
+    replaceToggle_.setToggleState(replace, juce::dontSendNotification);
 }
 
 void ImportWizard::cancelAnalysis() {
@@ -363,6 +399,9 @@ void ImportWizard::showReview() {
     juce::String s;
     s << analyzed_ << " files analyzed\n\n" << static_cast<int>(result_.nGood) << " Good\n" << static_cast<int>(result_.nUsable)
       << " Usable\n" << static_cast<int>(result_.nRejected) << " Rejected";
+    if (result_.added)
+        s << "\n\nThe library will have " << static_cast<int>(result_.nUsableSpeakers) << " talkers ("
+          << static_cast<int>(result_.nNewSpeakers) << " new).";
     summary_.setText(s, juce::dontSendNotification);
     juce::String d;
     for (const auto& f : result_.files) {
@@ -394,11 +433,17 @@ bool ImportWizard::commit() {
     settings_.update([&](AppSettingsData& d) { d.corpusRoot = rootUtf8; });
     updatePrefs(settings_, [&](Prefs& p) { p.lastImportDir = inUtf8; });
     goTo(Add);
-    summary_.setText("Voice library updated.\n\n" + juce::String(static_cast<int>(result_.nGood + result_.nUsable)) + " recordings from " +
-                         juce::String(static_cast<int>(result_.nUsableSpeakers)) + " talkers added.",
+    const juce::String recs = juce::String(static_cast<int>(result_.nGood + result_.nUsable));
+    const juce::String talkers = juce::String(readLibraryStatus(root_).talkers);
+    summary_.setText(result_.added ? "Voice library updated.\n\n" + recs + " recordings added. The library now has " + talkers + " talkers."
+                                   : "Voice library " + juce::String(replace_ ? "replaced" : "created") + ".\n\n" + recs + " recordings from " +
+                                         talkers + " talkers.",
                      juce::dontSendNotification);
     status_.setColour(juce::Label::textColourId, Theme::get().textDim);
-    status_.setText("Restart BabbleForge to use the new library.", juce::dontSendNotification);
+    // The running engine (if any) switches to the new library without a restart.
+    const bool live = notifyLibraryChanged({root_, replace_});
+    status_.setText(live ? "The new library is in use now. No restart needed." : "Restart BabbleForge to use the new library.",
+                    juce::dontSendNotification);
     if (onFinished) onFinished(true);
     return true;
 }
@@ -432,7 +477,9 @@ void ImportWizard::resized() {
         choose_.setBounds(row.removeFromRight(150));
         row.removeFromRight(8);
         path_.setBounds(row);
-        r.removeFromTop(8);
+        r.removeFromTop(6);
+        replaceToggle_.setBounds(r.removeFromTop(26));
+        r.removeFromTop(4);
         status_.setBounds(r.removeFromTop(48));
         break;
     }
@@ -461,9 +508,10 @@ void ImportWizard::resized() {
 }
 
 std::unique_ptr<OverlayDialog> makeImportWizardDialog(AppSettings& settings, fs::path libraryRoot, fs::path inputDir, bool autoStart,
-                                                      std::function<void(bool)> onDone) {
+                                                      std::function<void(bool)> onDone, bool replaceLibrary) {
     auto body = std::make_unique<ImportWizard>(settings, std::move(libraryRoot), std::move(inputDir));
     auto* w = body.get();
+    w->setReplaceLibrary(replaceLibrary);
     auto d = std::make_unique<OverlayDialog>("Add Audio", std::move(body), 340, 600);
     OverlayDialog* dlg = d.get();
     w->requestClose = [dlg] { dlg->close(); };
@@ -502,7 +550,7 @@ ManageLibraryBody::ManageLibraryBody(AppSettings& settings, std::function<void(s
         noFocus(*b);
         addAndMakeVisible(*b);
     }
-    add_.setTooltip("Import a folder of recordings. They are analysed automatically before anything is added.");
+    add_.setTooltip("Add a folder of recordings to the library. They are analysed automatically before anything is added.");
     scan_.setTooltip("Check that every file in the library is still readable.");
     rebuild_.setTooltip("Analyse the original recordings again, for example after a BabbleForge update.");
     add_.onClick = [this] { addAudio(); };
@@ -590,12 +638,13 @@ void ManageLibraryBody::rebuildAnalysis() {
     const bool have = !p.lastImportDir.empty() && fs::is_directory(dir, ec);
     if (!have) message_.setText("The original recordings folder is not known. Choose it in the next step.", juce::dontSendNotification);
     juce::Component::SafePointer<ManageLibraryBody> self(this);
+    // Re-analysing the original recordings replaces the library (adding them would only find duplicates).
     openDialog_(makeImportWizardDialog(settings_, libraryRootOf(settings_.get()), have ? dir : fs::path{}, have, [self](bool) {
         if (self) {
             self->refreshStatus();
             if (self->onChanged_) self->onChanged_();
         }
-    }));
+    }, true));
 }
 
 void ManageLibraryBody::resized() {

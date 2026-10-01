@@ -32,11 +32,27 @@ public:
     std::size_t openDecoders() const;
     std::uint64_t seeks() const noexcept { return seeks_; }
 
+    // Cache generation lease (hot reload). The source reads from `cacheDir` (the generation
+    // directory its paths live in); while it is alive the directory is "pinned" and
+    // CorpusDb::purgeOldCaches() never removes it. After an import renamed `<root>/cache` to
+    // `<root>/cache.old-<version>`, relocate() redirects future opens to the renamed
+    // directory (open decoders keep their handle) and moves the pin with it.
+    void setCacheDir(const std::filesystem::path& dir);
+    void relocate(const std::filesystem::path& to);
+    std::filesystem::path cacheDir() const;
+    static bool isPinned(const std::filesystem::path& dir);
+    // Renames a cache generation directory (`from` -> `to`, std::filesystem::rename semantics) while
+    // live sources read from it: their open decoders are closed first (so the rename also works where
+    // open files block it), and afterwards they are redirected to `to` (no read can fail in between).
+    // This is how an import retires `<root>/cache` to `<root>/cache.old-<version>`.
+    static void retireCacheDir(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& ec);
+
 private:
     struct Dec;
     Dec* acquire(RecordingId rec);
 
     std::vector<std::filesystem::path> paths_;
+    std::filesystem::path dir_;
     mutable std::mutex mu_;
     std::list<std::unique_ptr<Dec>> lru_;  // front = most recently used
     std::unordered_map<RecordingId, std::list<std::unique_ptr<Dec>>::iterator> open_;

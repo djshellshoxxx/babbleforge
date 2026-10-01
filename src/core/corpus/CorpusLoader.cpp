@@ -29,6 +29,7 @@ bool loadCorpus(const std::filesystem::path& root, LoadedCorpus& out, std::strin
     std::map<std::int64_t, SpeakerId> spkIdx;
     std::vector<SpeakerInput> sin;
     out.speakerDbId.clear();
+    out.identity = CorpusIdentity{};
     for (const auto& s : speakers) {
         if (!s.enabled) continue;
         SpeakerInput si;
@@ -47,6 +48,7 @@ bool loadCorpus(const std::filesystem::path& root, LoadedCorpus& out, std::strin
         si.weight = std::max(0.01f, static_cast<float>(s.qualityMean / 100.0));
         spkIdx[s.speakerId] = static_cast<SpeakerId>(sin.size());
         out.speakerDbId.push_back(s.speakerId);
+        out.identity.speakerExternalId.push_back(s.externalId);
         sin.push_back(si);
     }
 
@@ -55,6 +57,7 @@ bool loadCorpus(const std::filesystem::path& root, LoadedCorpus& out, std::strin
     std::map<std::int64_t, RecordingInput*> inOf;
     std::vector<RecordingInput> rin;
     std::vector<std::int64_t> dbIds;
+    std::vector<std::string> pcmShas;
     std::vector<std::filesystem::path> cachePaths;
     rin.reserve(recs.size());
     for (const auto& r : recs) {
@@ -69,6 +72,7 @@ bool loadCorpus(const std::filesystem::path& root, LoadedCorpus& out, std::strin
         ri.quality = static_cast<float>(std::clamp(r.qualityScore / 100.0, 0.0, 1.0));
         rin.push_back(std::move(ri));
         dbIds.push_back(r.recordingId);
+        pcmShas.push_back(r.pcmSha256);
         cachePaths.push_back(root / r.cacheFile);
     }
     for (std::size_t i = 0; i < rin.size(); ++i) inOf[dbIds[i]] = &rin[i];
@@ -89,12 +93,17 @@ bool loadCorpus(const std::filesystem::path& root, LoadedCorpus& out, std::strin
     const std::size_t n = out.snapshot->numRecordings();
     std::vector<std::filesystem::path> paths(n);
     out.recordingDbId.assign(n, 0);
+    out.identity.recordingPcmSha.assign(n, std::string());
     for (std::size_t r = 0; r < n; ++r) {
         const auto idx = out.snapshot->recording(static_cast<RecordingId>(r)).cacheFileIdx;
         paths[r] = cachePaths[idx];
         out.recordingDbId[r] = dbIds[idx];
+        out.identity.recordingPcmSha[r] = pcmShas[idx];
     }
+    out.identity.speakerDbId = out.speakerDbId;
+    out.identity.recordingDbId = out.recordingDbId;
     out.audio = std::make_shared<FlacCacheAudioSource>(std::move(paths));
+    out.audio->setCacheDir(root / "cache");
     return true;
 }
 

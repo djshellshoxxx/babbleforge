@@ -36,7 +36,21 @@ std::filesystem::path defaultLibraryRoot();
 // The configured library root (settings) or the default.
 std::filesystem::path libraryRootOf(const AppSettingsData& d);
 
+// The library on disk changed (the wizard installed an import). The application registers a handler
+// that hot-reloads the running engine (EngineController::reloadCorpus) without a restart; it returns
+// true when the new library is being taken into use. With no handler (or false) the dialogs ask for a
+// restart instead.
+struct LibraryChange {
+    std::filesystem::path root;
+    bool replaced = false;  // true: "Replace library" (unrelated content), false: recordings were added
+};
+using LibraryChangedHandler = std::function<bool(const LibraryChange&)>;
+void setLibraryChangedHandler(LibraryChangedHandler handler);
+bool notifyLibraryChanged(const LibraryChange& change);  // true: a running engine is switching over
+
 // Background import: scan, analyse, duplicate detection, aggregation, into `stagingRoot`.
+// `baseRoot` + `addToExisting`: append to the existing library at baseRoot (the merged library is
+// written to stagingRoot; see ImportOptions::addToExisting).
 class CorpusImportJob {
 public:
     struct Progress {
@@ -48,7 +62,8 @@ public:
     CorpusImportJob(const CorpusImportJob&) = delete;
     CorpusImportJob& operator=(const CorpusImportJob&) = delete;
 
-    void start(std::filesystem::path inputDir, std::filesystem::path stagingRoot);
+    void start(std::filesystem::path inputDir, std::filesystem::path stagingRoot, std::filesystem::path baseRoot = {},
+               bool addToExisting = false);
     void cancel();
     bool started() const;
     bool finished() const;
@@ -87,6 +102,11 @@ public:
     void setInputDir(const std::filesystem::path& dir);
     void startAnalysis();
     void cancelAnalysis();
+    // "Replace library" (off by default): the import replaces the library with the new recordings
+    // instead of adding them to it.
+    void setReplaceLibrary(bool replace);
+    bool replaceLibrary() const noexcept { return replace_; }
+    juce::ToggleButton& replaceToggle() { return replaceToggle_; }
     bool commit();
     Step step() const noexcept { return step_; }
     const CorpusImportJob& job() const noexcept { return *job_; }
@@ -113,13 +133,14 @@ private:
     std::filesystem::path root_, staging_, input_;
     std::unique_ptr<CorpusImportJob> job_ = std::make_unique<CorpusImportJob>();
     Step step_ = SelectFiles;
-    bool cancelling_ = false, committed_ = false;
+    bool cancelling_ = false, committed_ = false, replace_ = false;
     int analyzed_ = 0;
     ImportResult result_;
     double progress_ = 0.0;
 
     juce::TextEditor path_;
     juce::TextButton choose_{"Choose Folder..."}, next_{"Analyze"}, cancel_{"Cancel"}, details_{"Show details"};
+    juce::ToggleButton replaceToggle_{"Replace library"};
     juce::Label hint_, status_, summary_;
     juce::ProgressBar bar_{progress_};
     juce::TextEditor detailsText_;
@@ -129,7 +150,7 @@ private:
 // Dialog factories (the caller shows them with MainComponent::showDialog).
 std::unique_ptr<OverlayDialog> makeImportWizardDialog(AppSettings& settings, std::filesystem::path libraryRoot,
                                                       std::filesystem::path inputDir, bool autoStart,
-                                                      std::function<void(bool committed)> onDone);
+                                                      std::function<void(bool committed)> onDone, bool replaceLibrary = false);
 
 class ManageLibraryBody;
 struct ManageLibraryHandles {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <numeric>
 
 namespace bf {
@@ -167,6 +168,34 @@ std::shared_ptr<const CorpusSnapshot> CorpusSnapshot::build(std::string corpusVe
         ++sp.nAnchors;
     }
     return snap;
+}
+
+CorpusMigration makeCorpusMigration(const CorpusIdentity& from, const CorpusIdentity& to) {
+    CorpusMigration m;
+    m.speaker.assign(from.speakerDbId.size(), -1);
+    m.recording.assign(from.recordingDbId.size(), -1);
+    std::map<std::int64_t, std::size_t> spk, rec;
+    for (std::size_t i = 0; i < to.speakerDbId.size(); ++i) spk[to.speakerDbId[i]] = i;
+    for (std::size_t i = 0; i < to.recordingDbId.size(); ++i) rec[to.recordingDbId[i]] = i;
+    for (std::size_t i = 0; i < from.speakerDbId.size(); ++i) {
+        const auto it = spk.find(from.speakerDbId[i]);
+        if (it == spk.end()) continue;
+        if (i < from.speakerExternalId.size() && it->second < to.speakerExternalId.size() &&
+            from.speakerExternalId[i] != to.speakerExternalId[it->second])
+            continue;
+        m.speaker[i] = static_cast<std::int32_t>(it->second);
+        ++m.keptSpeakers;
+    }
+    for (std::size_t i = 0; i < from.recordingDbId.size(); ++i) {
+        const auto it = rec.find(from.recordingDbId[i]);
+        if (it == rec.end()) continue;
+        if (i < from.recordingPcmSha.size() && it->second < to.recordingPcmSha.size() &&
+            from.recordingPcmSha[i] != to.recordingPcmSha[it->second])
+            continue;
+        m.recording[i] = static_cast<std::int32_t>(it->second);
+        ++m.keptRecordings;
+    }
+    return m;
 }
 
 }  // namespace bf

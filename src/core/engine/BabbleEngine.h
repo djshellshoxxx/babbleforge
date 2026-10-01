@@ -101,6 +101,13 @@ public:
     const BabbleEngineConfig& config() const noexcept { return cfg_; }
     // Planner thread: re-plan now (external-feed mode); updates g_bnorm.
     std::vector<std::uint64_t> applyReplanNow(const TalkerPlanParams& params, std::int64_t atSample);
+    // Planner thread (external-feed mode): switches to a new corpus snapshot at `atSample`: the
+    // selector is rebuilt over the snapshot with the surviving state migrated, the planner re-plans
+    // from the new pool (TalkerPlanner::adoptSnapshot), the count normalisation is refreshed.
+    // Returns the discarded (not yet started) event ids like applyReplanNow().
+    std::vector<std::uint64_t> adoptCorpus(std::shared_ptr<const CorpusSnapshot> snap, const CorpusMigration& map,
+                                           std::int64_t atSample);
+    const CorpusSnapshot& snapshot() const noexcept { return *snap_; }
     void markSourceError() noexcept { sourceErrors_.store(true, std::memory_order_relaxed); }
     // Analysis thread: pops the renderer's occupancy frames into stats().
     void consumeOccupancy() noexcept;

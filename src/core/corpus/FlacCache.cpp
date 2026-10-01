@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace bf {
 
@@ -94,8 +95,99 @@ struct FlacCacheAudioSource::Dec {
     }
 };
 
-FlacCacheAudioSource::FlacCacheAudioSource(std::vector<std::filesystem::path> paths) : paths_(std::move(paths)) {}
-FlacCacheAudioSource::~FlacCacheAudioSource() = default;
+namespace {
+std::mutex& regMutex() { static std::mutex m; return m; }
+std::vector<FlacCacheAudioSource*>& registry() { static std::vector<FlacCacheAudioSource*> v; return v; }
+}  // namespace
+
+FlacCacheAudioSource::FlacCacheAudioSource(std::vector<std::filesystem::path> paths) : paths_(std::move(paths)) {
+    std::lock_guard<std::mutex> lk(regMutex());
+    registry().push_back(this);
+}
+
+namespace {
+std::mutex& pinMutex() { static std::mutex m; return m; }
+std::map<std::string, int>& pinMap() { static std::map<std::string, int> m; return m; }
+std::string pinKey(const std::filesystem::path& p) { return p.lexically_normal().generic_string(); }
+void pinDir(const std::filesystem::path& p) {
+    if (p.empty()) return;
+    std::lock_guard<std::mutex> lk(pinMutex());
+    ++pinMap()[pinKey(p)];
+}
+void unpinDir(const std::filesystem::path& p) {
+    if (p.empty()) return;
+    std::lock_guard<std::mutex> lk(pinMutex());
+    const auto it = pinMap().find(pinKey(p));
+    if (it != pinMap().end() && --it->second <= 0) pinMap().erase(it);
+}
+}  // namespace
+
+FlacCacheAudioSource::~FlacCacheAudioSource() {
+    {
+        std::lock_guard<std::mutex> lk(regMutex());
+        auto& r = registry();
+        r.erase(std::remove(r.begin(), r.end(), this), r.end());
+    }
+    unpinDir(dir_);
+}
+
+void FlacCacheAudioSource::retireCacheDir(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& ec) {
+    std::lock_guard<std::mutex> rl(regMutex());
+    std::vector<FlacCacheAudioSource*> hit;
+    for (auto* s : registry())
+        if (!s->dir_.empty() && pinKey(s->dir_) == pinKey(from)) hit.push_back(s);
+    std::vector<std::unique_lock<std::mutex>> locks;
+    for (auto* s : hit) {
+        locks.emplace_back(s->mu_);
+        s->open_.clear();
+        s->lru_.clear();  // closes the decoders
+    }
+    std::filesystem::rename(from, to, ec);
+    if (ec) return;
+    for (auto* s : hit) {
+        for (auto& p : s->paths_) {
+            if (p.empty()) continue;
+            const auto rel = p.lexically_relative(s->dir_);
+            if (rel.empty() || *rel.begin() == "..") continue;
+            p = to / rel;
+        }
+        unpinDir(s->dir_);
+        s->dir_ = to;
+        pinDir(s->dir_);
+    }
+}
+
+bool FlacCacheAudioSource::isPinned(const std::filesystem::path& dir) {
+    std::lock_guard<std::mutex> lk(pinMutex());
+    return pinMap().count(pinKey(dir)) != 0;
+}
+
+void FlacCacheAudioSource::setCacheDir(const std::filesystem::path& dir) {
+    std::lock_guard<std::mutex> lk(mu_);
+    unpinDir(dir_);
+    dir_ = dir;
+    pinDir(dir_);
+}
+
+std::filesystem::path FlacCacheAudioSource::cacheDir() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return dir_;
+}
+
+void FlacCacheAudioSource::relocate(const std::filesystem::path& to) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (dir_.empty() || to.empty()) return;
+    for (auto& p : paths_) {
+        if (p.empty()) continue;
+        std::error_code ec;
+        const auto rel = p.lexically_relative(dir_);
+        if (rel.empty() || *rel.begin() == "..") continue;
+        p = to / rel;
+    }
+    unpinDir(dir_);
+    dir_ = to;
+    pinDir(dir_);
+}
 
 std::size_t FlacCacheAudioSource::openDecoders() const {
     std::lock_guard<std::mutex> lk(mu_);

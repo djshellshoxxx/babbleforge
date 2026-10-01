@@ -625,6 +625,21 @@ std::vector<std::uint64_t> TalkerPlanner::replan(const TalkerPlanParams& params,
     return discarded;
 }
 
+std::vector<std::uint64_t> TalkerPlanner::adoptSnapshot(std::shared_ptr<const CorpusSnapshot> snap, const CorpusMigration& map,
+                                                        std::int64_t now) {
+    snap_ = std::move(snap);
+    for (auto& s : slots_) {
+        if (!s.hasSpeaker) continue;
+        const SpeakerId n = map.mapSpeaker(s.speaker);
+        if (n == CorpusMigration::kNoSpeaker) s.hasSpeaker = false;
+        else s.speaker = n;
+    }
+    // Kept events keep their recording / segment ids of the old snapshot (their layouts are built);
+    // only the speaker id matters to the planner (the "active speakers" exclusion of the selector).
+    for (auto& pe : events_) pe.ev.speaker = map.mapSpeaker(pe.ev.speaker);
+    return replan(p_, now);
+}
+
 std::size_t TalkerPlanner::takeNew(std::vector<PlannedEvent>& out) {
     const std::size_t n = events_.size() - taken_;
     for (std::size_t i = taken_; i < events_.size(); ++i) out.push_back(events_[i]);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <numeric>
 
 #include <nlohmann/json.hpp>
@@ -445,6 +446,100 @@ void SegmentSelector::commit(const SegmentPick& p, std::int64_t srcEnd, std::int
     auto& cl = cool_[p.recording];
     std::erase_if(cl, [&](const CoolRegion& c) { return c.expiry <= tStart; });
     cl.push_back({p.anchor, std::max(srcEnd, p.anchor + 1), tEnd + clockSamples(segCooldownS_)});
+}
+
+// ------------------------------------------------------------------ hot reload
+
+void SegmentSelector::migrateFrom(const SegmentSelector& old, const CorpusMigration& m) {
+    rng_ = old.rng_;
+    nextRotation_ = old.nextRotation_;
+    stats_ = old.stats_;
+    std::vector<bool> inOld(snap_->numSpeakers(), false);  // new speakers that existed before
+    for (SpeakerId so = 0; so < old.spk_.size(); ++so) {
+        const SpeakerId sn = m.mapSpeaker(so);
+        if (sn == CorpusMigration::kNoSpeaker || sn >= spk_.size()) continue;
+        inOld[sn] = true;
+        const SpeakerState& ost = old.spk_[so];
+        if (ost.perm.empty() && !ost.hasUse) continue;
+        SpeakerState& st = spk_[sn];
+        st.hasUse = ost.hasUse;
+        st.lastUseStart = ost.lastUseStart;
+        st.lastUseEnd = ost.lastUseEnd;
+        st.cycle = ost.cycle;
+        if (ost.perm.empty()) continue;
+        const auto oldAnchors = old.snap_->anchorsOf(so);
+        const auto newAnchors = snap_->anchorsOf(sn);
+        std::map<std::pair<RecordingId, std::int64_t>, std::uint32_t> where;
+        for (std::uint32_t a : eligibleAnchors_[sn]) where[{newAnchors[a].recording, newAnchors[a].anchor}] = a;
+        std::vector<std::uint32_t> consumed, remaining;
+        std::vector<bool> present(newAnchors.size(), false);
+        for (std::size_t i = 0; i < ost.perm.size(); ++i) {
+            if (ost.perm[i] >= oldAnchors.size()) continue;
+            const SegmentRec& oa = oldAnchors[ost.perm[i]];
+            const RecordingId nr = m.mapRecording(oa.recording);
+            if (nr == CorpusMigration::kNoRecording) continue;
+            const auto it = where.find({nr, oa.anchor});
+            if (it == where.end() || present[it->second]) continue;
+            present[it->second] = true;
+            (i < ost.pos ? consumed : remaining).push_back(it->second);
+        }
+        RngStream r(cfg_.seed, "selector.migrate." + std::to_string(sn), ost.cycle);
+        for (std::uint32_t a : eligibleAnchors_[sn]) {
+            if (present[a]) continue;
+            remaining.insert(remaining.begin() + static_cast<std::ptrdiff_t>(r.uniformInt(remaining.size() + 1)), a);
+        }
+        st.perm = consumed;
+        st.pos = static_cast<std::uint32_t>(consumed.size());
+        st.perm.insert(st.perm.end(), remaining.begin(), remaining.end());
+        st.soloRemaining = 0;
+        for (std::size_t i = st.pos; i < st.perm.size(); ++i)
+            if (newAnchors[st.perm[i]].flags & kSegSoloRisk) ++st.soloRemaining;
+    }
+    // Cooldown regions of surviving recordings (absolute planner-clock times stay valid).
+    for (RecordingId ro = 0; ro < old.cool_.size(); ++ro) {
+        const RecordingId rn = m.mapRecording(ro);
+        if (rn == CorpusMigration::kNoRecording || rn >= cool_.size()) continue;
+        cool_[rn] = old.cool_[ro];
+    }
+    recent_.clear();
+    for (SpeakerId s : old.recent_) {
+        const SpeakerId n = m.mapSpeaker(s);
+        if (n != CorpusMigration::kNoSpeaker) recent_.push_back(n);
+    }
+    // Pool: surviving eligible members, then newcomers, then the rest of the freshly built pool.
+    const std::vector<SpeakerId> fresh = pool_;
+    const std::size_t P = fresh.size();
+    std::vector<SpeakerId> kept;
+    for (SpeakerId so : old.pool_) {
+        const SpeakerId sn = m.mapSpeaker(so);
+        if (sn != CorpusMigration::kNoSpeaker && std::find(eligible_.begin(), eligible_.end(), sn) != eligible_.end() &&
+            std::find(kept.begin(), kept.end(), sn) == kept.end())
+            kept.push_back(sn);
+    }
+    auto has = [&](const std::vector<SpeakerId>& v, SpeakerId s) { return std::find(v.begin(), v.end(), s) != v.end(); };
+    std::vector<SpeakerId> newcomers, others;
+    for (SpeakerId s : fresh) (inOld[s] ? others : newcomers).push_back(s);
+    if (P > 0) {
+        if (kept.size() > P) kept.resize(P);
+        // Make room for newcomers by dropping the least recently used members (at most ceil(P / 4)).
+        const std::size_t room = std::min<std::size_t>(newcomers.size(), (P + 3) / 4);
+        std::size_t vacant = P - kept.size();
+        if (vacant < room) {
+            std::vector<std::pair<std::int64_t, SpeakerId>> lru;
+            for (SpeakerId s : kept)
+                lru.push_back({spk_[s].hasUse ? spk_[s].lastUseStart : std::numeric_limits<std::int64_t>::min(), s});
+            std::sort(lru.begin(), lru.end());
+            for (std::size_t k = 0; vacant < room && k < lru.size(); ++k) {
+                kept.erase(std::find(kept.begin(), kept.end(), lru[k].second));
+                ++vacant;
+            }
+        }
+        for (SpeakerId s : newcomers) if (kept.size() < P && !has(kept, s)) kept.push_back(s);
+        for (SpeakerId s : others) if (kept.size() < P && !has(kept, s)) kept.push_back(s);
+        for (SpeakerId s : eligible_) if (kept.size() < P && !has(kept, s)) kept.push_back(s);
+    }
+    std::sort(kept.begin(), kept.end());
+    pool_ = std::move(kept);
 }
 
 // ------------------------------------------------------------------ persistence

@@ -26,6 +26,7 @@ target_sources(BabbleForge PRIVATE
   dialogs/FirstRunWizard.cpp dialogs/FirstRunWizard.h
   dialogs/SafetyBanner.cpp dialogs/SafetyBanner.h
   tests/UiTestsAnalysis.cpp
+  tests/LibraryTests.cpp
   tests/UiTests.cpp
   tests/AreaOutputTests.cpp)
 target_include_directories(BabbleForge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -72,7 +72,8 @@ public:
     static std::unique_ptr<CorpusDb> open(const std::string& path, bool readOnly, std::string* error = nullptr);
 
     // Deletes superseded cache generations `<root>/cache.old-*`, keeping the most recent one
-    // (by modification time). Returns the number of directories removed.
+    // (by modification time). Generations that a live FlacCacheAudioSource still reads from
+    // (FlacCacheAudioSource::isPinned) are never removed. Returns the number of directories removed.
     static int purgeOldCaches(const std::string& root);
 
     bool begin();

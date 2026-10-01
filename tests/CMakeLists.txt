@@ -41,7 +41,8 @@ include(CTest)
 include(Catch)
 # Hidden test cases ("[.long]": 5 min / 1 h renders, 10 min soak) are not discovered here.
 catch_discover_tests(bfcore_tests)
-catch_discover_tests(bfcore_rtcheck_tests TEST_PREFIX "rtcheck: ")
+# The 20 s paced run is timing-sensitive (xruns, late starts): run it alone, never alongside other tests under ctest -j.
+catch_discover_tests(bfcore_rtcheck_tests TEST_PREFIX "rtcheck: " PROPERTIES RUN_SERIAL TRUE)
 
 # Long acceptance renders (ENGINE.md §12 long forms). Excluded from the default run: they skip
 # (exit code 4, reported as "Skipped") unless BF_LONG_TESTS=1, e.g.

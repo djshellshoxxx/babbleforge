@@ -19,8 +19,9 @@
 // Device handling: the engine opens only cfg.deviceId and never switches devices. Device lost
 // (event or no callback for 2 s) -> DEVICE_LOST; the same device returning with
 // autoReconnectSameDevice -> PREPARING. A device-initiated sample-rate change rebuilds at the
-// new rate (STOPPING -> PREPARING). V1 babble needs 48 kHz: at other rates a babble plan runs
-// stationary-only with DEGRADED `engine.rateUnsupported` (Strict / LaboratoryMask: ERROR).
+// new rate (STOPPING -> PREPARING). Babble runs at 44.1 / 48 / 88.2 / 96 kHz (per-event preload
+// resampling from the 48 kHz corpus); at any other rate a babble plan runs stationary-only with
+// DEGRADED `engine.rateUnsupported` (Strict / LaboratoryMask: ERROR).
 //
 // Fallback policy (RELIABILITY §3-4) through MaskStrategy::degrade(): at prepare for the corpus
 // (reduced plan / stationary / ERROR), at run time for source failures (Continuous: substitute

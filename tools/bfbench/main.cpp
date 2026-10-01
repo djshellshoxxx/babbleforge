@@ -182,7 +182,7 @@ Result benchmarkConfig(const Config& cfg, const bf::CorpusHandle& corpus,
         std::sort(sorted.begin(), sorted.end());
 
         result.p50 = sorted[sorted.size() / 2];
-        result.p99 = sorted[static_cast<size_t>(sorted.size() * 0.99)];
+        result.p99 = sorted[static_cast<size_t>(static_cast<double>(sorted.size()) * 0.99)];
         result.maxLoad = sorted.back();
 
         double totalTimeS = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime).count();

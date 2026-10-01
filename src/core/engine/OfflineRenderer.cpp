@@ -11,6 +11,7 @@
 #include "core/config/Sha256.h"
 #include "core/io/WavWriter.h"
 #include "core/spectrum/FirDesigner.h"
+#include "core/talker/SourcePreparer.h"
 
 namespace bf {
 
@@ -101,8 +102,8 @@ PassOutput runPass(const DataSet& ds, const Scenario& sc, const CorpusHandle& co
     const bool strict = plan0.fallback == FallbackPolicy::Strict || sc.lab.has_value();
     if (plan0.babbleEnabled && !corpus.snapshot)
         return fail(kRenderConfigError, "the plan needs a voice corpus (--corpus or --synthetic-corpus)");
-    if (plan0.babbleEnabled && sc.sampleRate != 48000.0)
-        return fail(kRenderConfigError, "babble rendering requires sampleRate 48000 in V1");
+    if (plan0.babbleEnabled && !isSupportedBabbleRate(sc.sampleRate))
+        return fail(kRenderConfigError, "babble rendering requires sampleRate 44100, 48000, 88200 or 96000");
     if (sc.lab && plan0.babbleEnabled && plan0.talkers.mode == PlanMode::ContinuousN &&
         static_cast<int>(plan0.talkers.maxActive) > cs.availableSpeakers)
         return fail(kRenderSourceFailure, "laboratory continuousN needs " + std::to_string(plan0.talkers.maxActive) +

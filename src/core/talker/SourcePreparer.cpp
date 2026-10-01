@@ -2,17 +2,62 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <vector>
+
+#include "core/corpus/ingest/Signal.h"
 
 namespace bf {
 
 namespace {
 constexpr double kHalfPi = 1.57079632679489661923;
+
+// floor(a / b) for b > 0.
+std::int64_t floorDiv(std::int64_t a, std::int64_t b) noexcept {
+    const std::int64_t q = a / b;
+    return (a % b != 0 && a < 0) ? q - 1 : q;
+}
+}  // namespace
+
+bool isSupportedBabbleRate(double fs) noexcept {
+    return fs == 44100.0 || fs == 48000.0 || fs == 88200.0 || fs == 96000.0;
+}
+
+RateFamily rateFamily(std::int64_t engineRate) noexcept {
+    if (engineRate == 96000) return {48000, 2};
+    if (engineRate == 88200) return {44100, 2};
+    if (engineRate > 0) return {engineRate, 1};
+    return {kCorpusRate, 1};
+}
+
+std::int64_t secondsToEngine(double s, std::int64_t engineRate) noexcept {
+    const RateFamily f = rateFamily(engineRate);
+    return static_cast<std::int64_t>(std::llround(s * static_cast<double>(f.base))) * f.mult;
+}
+
+std::int64_t msToEngine(double ms, std::int64_t engineRate) noexcept {
+    const RateFamily f = rateFamily(engineRate);
+    // base / 1000 is exact (48.0) at 48 kHz: identical to the V1 48 kHz timeline.
+    return static_cast<std::int64_t>(std::llround(ms * (static_cast<double>(f.base) / 1000.0))) * f.mult;
+}
+
+std::int64_t corpusToEngine(std::int64_t p48, std::int64_t engineRate) noexcept {
+    if (engineRate == kCorpusRate) return p48;
+    const RateFamily f = rateFamily(engineRate);
+    return floorDiv(p48 * f.base + kCorpusRate / 2, kCorpusRate) * f.mult;
+}
+
+std::int64_t engineToCorpus(std::int64_t pEngine, std::int64_t engineRate) noexcept {
+    if (engineRate == kCorpusRate) return pEngine;
+    return floorDiv(pEngine * kCorpusRate + engineRate / 2, engineRate);
 }
 
 std::int64_t ProcessedLayout::sourcePosAt(std::int64_t p) const noexcept {
     if (pieces.empty()) return anchor;
-    p = std::clamp<std::int64_t>(p, 0, length);
+    p = std::clamp<std::int64_t>(engineToCorpus(p, rate), 0, sourceLength);
     // Last piece whose dstStart <= p.
     std::size_t i = pieces.size() - 1;
     while (i > 0 && pieces[i].dstStart > p) --i;
@@ -27,10 +72,11 @@ bool ProcessedLayout::speechAt(std::int64_t p) const noexcept {
 
 ProcessedLayout buildProcessedLayout(const CorpusSnapshot& snap, RecordingId rec,
                                      std::int64_t anchor, std::int64_t maxGapSamples,
-                                     std::int64_t maxLen) {
+                                     std::int64_t maxLen, std::int64_t engineRate) {
     ProcessedLayout L;
     L.recording = rec;
     L.anchor = anchor;
+    L.rate = engineRate > 0 ? engineRate : kCorpusRate;
     const std::int64_t recLen = snap.recording(rec).length;
     const std::int64_t maxGap = std::max(maxGapSamples, kSpliceSamples);
     const auto regions = snap.regionsOf(rec);
@@ -83,6 +129,16 @@ ProcessedLayout buildProcessedLayout(const CorpusSnapshot& snap, RecordingId rec
         if (dst < 0 || dst >= L.length) break;
         const std::int64_t e = std::min(L.length, dst + (r.end - s0));
         L.speech.push_back({dst, e});
+    }
+    L.sourceLength = L.length;
+    if (L.rate != kCorpusRate) {  // engine-domain timing (round half up per boundary)
+        const std::int64_t R = L.rate;
+        L.length = corpusToEngine(L.sourceLength, R);
+        for (auto& sp : L.speech) sp = {corpusToEngine(sp.start, R), std::min(L.length, corpusToEngine(sp.end, R))};
+        std::erase_if(L.speech, [](const SampleSpan& sp) { return sp.end <= sp.start; });
+        for (auto& pz : L.pauses) pz = {corpusToEngine(pz.start, R), corpusToEngine(pz.end, R), pz.phraseBoundary};
+        while (!L.pauses.empty() && L.pauses.back().start >= L.length) L.pauses.pop_back();
+        L.resampled = std::make_shared<ResampledEventCache>();
     }
     return L;
 }
@@ -176,12 +232,38 @@ bool BlockChain::read(const BlockPool& pool, std::uint64_t pos, float* dst, std:
 // ---------------------------------------------------------------- SourcePreparer
 
 bool SourcePreparer::render(const ProcessedLayout& L, std::int64_t from, float* dst, std::size_t n) {
+    if (L.rate == kCorpusRate || !L.resampled) return renderSource(L, from, dst, n);
+    std::memset(dst, 0, n * sizeof(float));
+    ResampledEventCache& c = *L.resampled;
+    std::lock_guard<std::mutex> lk(c.m);
+    if (!c.ready) {
+        // Whole processed event at 48 kHz, then one r8brain pass to the engine rate: the
+        // result depends only on the layout (bit-identical for any request pattern).
+        std::vector<float> src(static_cast<std::size_t>(std::max<std::int64_t>(0, L.sourceLength)));
+        c.ok = renderSource(L, 0, src.data(), src.size());
+        c.audio = ingest::resample(src.data(), src.size(), static_cast<double>(kCorpusRate), static_cast<double>(L.rate));
+        c.audio.resize(static_cast<std::size_t>(std::max<std::int64_t>(0, L.length)), 0.0f);
+        c.ready = true;
+    }
+    const std::int64_t a = std::max<std::int64_t>(from, 0);
+    const std::int64_t b = std::min<std::int64_t>(from + static_cast<std::int64_t>(n), static_cast<std::int64_t>(c.audio.size()));
+    if (b > a)
+        std::memcpy(dst + (a - from), c.audio.data() + a, static_cast<std::size_t>(b - a) * sizeof(float));
+    const bool ok = c.ok;
+    if (from + static_cast<std::int64_t>(n) >= L.length) {  // event fully delivered: free the cache
+        std::vector<float>().swap(c.audio);
+        c.ready = false;
+    }
+    return ok;
+}
+
+bool SourcePreparer::renderSource(const ProcessedLayout& L, std::int64_t from, float* dst, std::size_t n) {
     std::memset(dst, 0, n * sizeof(float));
     const std::int64_t to = from + static_cast<std::int64_t>(n);
     bool ok = true;
     for (const auto& pc : L.pieces) {
         const std::int64_t a = std::max(from, pc.dstStart);
-        const std::int64_t b = std::min({to, pc.dstStart + pc.len, L.length});
+        const std::int64_t b = std::min({to, pc.dstStart + pc.len, L.sourceLength});
         if (b <= a) continue;
         const std::size_t k = static_cast<std::size_t>(b - a);
         piece_.resize(k);

@@ -109,7 +109,7 @@ double percentileOf(std::vector<double> v, double q) {
 ThirdOctArray estimatePoolLtassDb(const CorpusSnapshot& snap, IAudioSource& audio,
                                   const std::vector<SpeakerId>& speakers, bool* readFailure) {
     constexpr std::size_t kAnchors = 4;
-    constexpr std::int64_t kLen = 3 * 48000;
+    constexpr std::int64_t kLen = 3 * kCorpusRate;  // raw corpus audio (48 kHz domain)
     ThirdOctArray acc{};
     std::size_t used = 0;
     std::vector<float> buf;
@@ -133,7 +133,7 @@ ThirdOctArray estimatePoolLtassDb(const CorpusSnapshot& snap, IAudioSource& audi
         }
         if (buf.size() < 16384) continue;
         const float* ch = buf.data();
-        const SpectrumAnalysis a = analyzeSpectrum(&ch, 1, buf.size(), 48000.0);
+        const SpectrumAnalysis a = analyzeSpectrum(&ch, 1, buf.size(), static_cast<double>(kCorpusRate));
         double tot = 0.0;
         for (double p : a.overallPowerLin) tot += p;
         if (!(tot > 0.0)) continue;
@@ -288,7 +288,7 @@ int MaskEngine::latencySamples() const noexcept {
 }
 
 bool MaskEngine::createBabble(const MaskRenderPlan& plan, std::int64_t at) {
-    if (!cfg_.corpus || !cfg_.audio || fs_ != 48000.0) {
+    if (!cfg_.corpus || !cfg_.audio || !isSupportedBabbleRate(fs_)) {
         babbleUnavailable_ = true;
         return false;
     }
@@ -312,6 +312,7 @@ bool MaskEngine::createBabble(const MaskRenderPlan& plan, std::int64_t at) {
     bc.probeSeconds = cfg_.babbleProbeSeconds;
     bc.externalFeed = cfg_.realtime;
     bc.blockPoolBlocks = cfg_.blockPoolBlocks;
+    bc.fs = fs_;
     babble_ = std::make_unique<BabbleEngine>(cfg_.corpus, *cfg_.audio, bc);
     babbleStart_ = at;
     currentTalkerHash_ = bc.plan.hash();
@@ -500,7 +501,7 @@ void MaskEngine::placeNewTalkers(std::int64_t cellStart) {
         ++eventCursor_;
         if (e.endSample <= bStart || e.slot >= slotPlaced_.size()) continue;
         const GainVector g = spatial_->placeTalker(static_cast<int>(e.slot),
-                                                   static_cast<double>(e.length()) / 48000.0, -1);
+                                                   static_cast<double>(e.length()) / fs_, -1);
         babble_->setSlotGains(e.slot, g.data(), g.size());
         slotPlaced_[e.slot] = 1;
         slotUsed_[e.slot] = 1;
@@ -970,7 +971,7 @@ bool MaskEngine::rtPlaceEvent(const TalkerEvent& e, float* gains, std::size_t n)
             slotPlaced_[s] = 0;
         }
     }
-    const GainVector g = spatial_->placeTalker(static_cast<int>(e.slot), static_cast<double>(e.length()) / 48000.0, -1);
+    const GainVector g = spatial_->placeTalker(static_cast<int>(e.slot), static_cast<double>(e.length()) / fs_, -1);
     slotPlaced_[e.slot] = 1;
     slotUsed_[e.slot] = 1;
     slotEnd_[e.slot] = e.endSample;

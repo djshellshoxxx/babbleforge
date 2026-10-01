@@ -41,7 +41,7 @@ enum DegradedReason : std::uint32_t {
     kDegAnalysisStalled = 1u << 8,      // analysis.stalled
     kDegPlannerStalled = 1u << 9,       // planner.stalled
     kDegFallbackStationary = 1u << 10,  // fallback.stationary (babble replaced by stationary)
-    kDegRateUnsupported = 1u << 11,     // engine.rateUnsupported (babble needs fs = 48 kHz in V1)
+    kDegRateUnsupported = 1u << 11,     // engine.rateUnsupported (babble needs fs in {44.1, 48, 88.2, 96} kHz)
 };
 inline constexpr int kNumDegradedReasons = 12;
 std::string_view degradedReasonCode(std::uint32_t bit) noexcept;

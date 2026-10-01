@@ -9,6 +9,7 @@
 
 #include "core/math/DetMath.h"
 #include "core/random/Distributions.h"
+#include "core/talker/SourcePreparer.h"
 
 namespace bf {
 
@@ -19,6 +20,11 @@ constexpr std::size_t kRecentCap = 256;
 
 std::int64_t secToSamples(double s) { return static_cast<std::int64_t>(std::llround(s * kFs)); }
 }  // namespace
+
+// Planner-clock durations (engine samples); corpus material lengths use secToSamples().
+std::int64_t SegmentSelector::clockSamples(double s) const {
+    return secondsToEngine(s, static_cast<std::int64_t>(std::llround(cfg_.clockRate)));
+}
 
 SegmentSelector::SegmentSelector(std::shared_ptr<const CorpusSnapshot> snap, const SelectorConfig& cfg)
     : snap_(std::move(snap)), cfg_(cfg), rng_(cfg.seed, "selector", 0) {
@@ -35,7 +41,7 @@ SegmentSelector::SegmentSelector(std::shared_ptr<const CorpusSnapshot> snap, con
     buildFeatureSpace();
     buildEligible();
     buildPool();
-    nextRotation_ = cfg_.rotationPeriodS > 0.0 ? secToSamples(cfg_.rotationPeriodS)
+    nextRotation_ = cfg_.rotationPeriodS > 0.0 ? clockSamples(cfg_.rotationPeriodS)
                                                : std::numeric_limits<std::int64_t>::max();
 }
 
@@ -219,7 +225,7 @@ SpeakerId SegmentSelector::nearestNonPool(SpeakerId ref, const std::vector<bool>
 
 void SegmentSelector::maybeRotatePool(std::int64_t t, std::span<const SpeakerId> active) {
     while (t >= nextRotation_) {
-        nextRotation_ += secToSamples(cfg_.rotationPeriodS);
+        nextRotation_ += clockSamples(cfg_.rotationPeriodS);
         const std::size_t P = pool_.size();
         if (P == 0 || eligible_.size() <= P) continue;
         const std::size_t nRep = (P + 3) / 4;
@@ -365,7 +371,7 @@ bool SegmentSelector::eligibleAt(SpeakerId s, std::int64_t t, std::span<const Sp
     const std::size_t nr = std::min<std::size_t>(recentN, recent_.size());
     for (std::size_t i = 0; i < nr; ++i)
         if (recent_[recent_.size() - 1 - i] == s) return false;
-    if (timeRule && spk_[s].hasUse && t - spk_[s].lastUseEnd < secToSamples(cfg_.speakerReuseS)) return false;
+    if (timeRule && spk_[s].hasUse && t - spk_[s].lastUseEnd < clockSamples(cfg_.speakerReuseS)) return false;
     return true;
 }
 
@@ -374,7 +380,7 @@ double SegmentSelector::weightOf(SpeakerId s, std::int64_t t) const {
     const double wDiv = static_cast<double>(snap_->speaker(s).weight);
     double wAge = 3.0;
     if (st.hasUse)
-        wAge = std::min(1.0 + static_cast<double>(t - st.lastUseStart) / (cfg_.ageTS * kFs), 3.0);
+        wAge = std::min(1.0 + static_cast<double>(t - st.lastUseStart) / (cfg_.ageTS * cfg_.clockRate), 3.0);
     double wCvr = 1.0;
     if (cfg_.soloRiskWeight != 1.0) {
         std::size_t rem = st.perm.empty() ? 0 : st.perm.size() - st.pos;
@@ -438,7 +444,7 @@ void SegmentSelector::commit(const SegmentPick& p, std::int64_t srcEnd, std::int
     if (recent_.size() > kRecentCap) recent_.pop_front();
     auto& cl = cool_[p.recording];
     std::erase_if(cl, [&](const CoolRegion& c) { return c.expiry <= tStart; });
-    cl.push_back({p.anchor, std::max(srcEnd, p.anchor + 1), tEnd + secToSamples(segCooldownS_)});
+    cl.push_back({p.anchor, std::max(srcEnd, p.anchor + 1), tEnd + clockSamples(segCooldownS_)});
 }
 
 // ------------------------------------------------------------------ persistence
@@ -447,6 +453,7 @@ nlohmann::json SegmentSelector::exportState(std::int64_t now) const {
     nlohmann::json j;
     j["schema"] = "babbleforge.selectorstate/1";
     j["corpusVersion"] = snap_->corpusVersion();
+    j["clockRate"] = cfg_.clockRate;
     nlohmann::json sp = nlohmann::json::array();
     for (SpeakerId s = 0; s < spk_.size(); ++s) {
         const auto& st = spk_[s];
@@ -477,6 +484,12 @@ bool SegmentSelector::importState(const nlohmann::json& j, std::int64_t now) {
     try {
         if (j.value("schema", std::string()) != "babbleforge.selectorstate/1") return false;
         if (j.value("corpusVersion", std::string()) != snap_->corpusVersion()) return false;
+        // Times are stored in planner-clock samples: rescale when the engine rate changed.
+        const double storedRate = j.value("clockRate", cfg_.clockRate);
+        const double scale = storedRate > 0.0 ? cfg_.clockRate / storedRate : 1.0;
+        auto ago = [&](const nlohmann::json& v) {
+            return static_cast<std::int64_t>(std::llround(static_cast<double>(v.get<std::int64_t>()) * scale));
+        };
         for (auto& st : spk_) st = SpeakerState{};
         for (const auto& e : j.at("speakers")) {
             const SpeakerId s = e.at("id").get<SpeakerId>();
@@ -488,8 +501,8 @@ bool SegmentSelector::importState(const nlohmann::json& j, std::int64_t now) {
             if (st.perm.size() != eligibleAnchors_[s].size() || st.pos > st.perm.size()) return false;
             if (e.contains("lastUseAgo")) {
                 st.hasUse = true;
-                st.lastUseStart = now - e.at("lastUseAgo").get<std::int64_t>();
-                st.lastUseEnd = now - e.at("lastEndAgo").get<std::int64_t>();
+                st.lastUseStart = now - ago(e.at("lastUseAgo"));
+                st.lastUseEnd = now - ago(e.at("lastEndAgo"));
             }
             const auto anchors = snap_->anchorsOf(s);
             st.soloRemaining = 0;
@@ -501,7 +514,7 @@ bool SegmentSelector::importState(const nlohmann::json& j, std::int64_t now) {
             const RecordingId r = c.at("rec").get<RecordingId>();
             if (r >= cool_.size()) return false;
             cool_[r].push_back({c.at("start").get<std::int64_t>(), c.at("end").get<std::int64_t>(),
-                                now + c.at("remaining").get<std::int64_t>()});
+                                now + ago(c.at("remaining"))});
         }
         auto pool = j.at("pool").get<std::vector<SpeakerId>>();
         if (!pool.empty()) pool_ = std::move(pool);

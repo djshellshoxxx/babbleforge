@@ -2,6 +2,10 @@
 // Offline synchronous babble engine: TalkerPlanner + SegmentSelector + SourcePreparer +
 // VoiceRenderer (docs/TALKER_ENGINE.md §2, ENGINE.md §3.2).
 //
+// Runs at any supported engine rate (cfg.fs: 44.1 / 48 / 88.2 / 96 kHz): positions, plan
+// changes and the planner clock are engine samples; the 48 kHz corpus audio is resampled per
+// event at preparation time (SourcePreparer).
+//
 // render() plans ahead (horizon 6 s), prepares each event's processed audio synchronously
 // into block chains just before it is needed, and renders the babble bus. Output is
 // deterministic and bit-identical for any sequence of render() block sizes (D2): scheduled
@@ -48,6 +52,7 @@ struct BabbleEngineConfig {
     bool trimEnabled = false;
     bool retainLayouts = false;        // diagnostics: keep every event's layout in the planner
     bool externalFeed = false;         // real-time host: see the header comment
+    double fs = 48000.0;               // engine rate (isSupportedBabbleRate()); planner clock unit
 };
 
 struct BabbleEngineStats {
@@ -127,6 +132,7 @@ private:
     struct Replan { TalkerPlanParams params; std::int64_t at; };
     std::deque<Replan> replans_;
     std::int64_t pos_ = 0;
+    std::int64_t fs_ = 48000, trimCadence_ = 5 * 48000, trimFreeze_ = 10 * 48000;
     double gbnorm_ = 1.0;
     std::atomic<bool> sourceErrors_{false};
     std::vector<float*> ptrs_;

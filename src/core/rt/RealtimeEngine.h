@@ -155,6 +155,7 @@ private:
     std::unique_ptr<TapSink> tapSink_;
     std::array<TapRing, kNumTaps> taps_;
     double fs_ = 48000.0;
+    std::int64_t fsB_ = 48000;  // babble (planner) clock: engine samples
     int nCh_ = 0, nOut_ = 0, maxBlock_ = 0;
     std::int64_t babbleStart_ = 0;
     bool babble_ = false;

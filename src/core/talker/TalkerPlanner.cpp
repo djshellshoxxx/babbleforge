@@ -15,8 +15,9 @@ namespace {
 constexpr double kLn10 = 2.302585092994045684;
 constexpr double kPi = 3.14159265358979323846;
 
-std::int64_t msToSmp(double ms) { return static_cast<std::int64_t>(std::llround(ms * 48.0)); }
-std::int64_t sToSmp(double s) { return static_cast<std::int64_t>(std::llround(s * 48000.0)); }
+// 48 kHz source-domain conversions (layout construction parameters).
+std::int64_t msToSrc(double ms) { return static_cast<std::int64_t>(std::llround(ms * 48.0)); }
+std::int64_t sToSrc(double s) { return static_cast<std::int64_t>(std::llround(s * 48000.0)); }
 double dbToLin(double db) { return detexp(db * kLn10 / 20.0); }
 
 // Mean of a log-normal (median, sigmaLn) conditioned on [lo, hi] (Simpson, detmath only).
@@ -65,9 +66,26 @@ double fadeSqIntegral(double a, double b, double fi, double fos, double len) {
 }
 }  // namespace
 
+std::int64_t TalkerPlanner::msToSmp(double ms) const { return msToEngine(ms, fs_); }
+std::int64_t TalkerPlanner::sToSmp(double s) const { return secondsToEngine(s, fs_); }
+
+// floor(f * len) on the base-rate grid (len is a multiple of mult_): scale-exact across a family.
+std::int64_t TalkerPlanner::fracOf(double f, std::int64_t len) const {
+    return static_cast<std::int64_t>(f * static_cast<double>(len / mult_)) * mult_;
+}
+
 TalkerPlanner::TalkerPlanner(std::shared_ptr<const CorpusSnapshot> snap, SegmentSelector& selector,
-                             const TalkerPlanParams& params)
-    : snap_(std::move(snap)), sel_(selector), p_(params) {
+                             const TalkerPlanParams& params, double fs)
+    : fs_(static_cast<std::int64_t>(std::llround(fs > 0.0 ? fs : 48000.0))),
+      snap_(std::move(snap)), sel_(selector), p_(params) {
+    mult_ = rateFamily(fs_).mult;
+    guard_ = msToSmp(40.0);
+    freeze_ = sToSmp(0.5);
+    keepEnded_ = 3 * fs_;
+    jitter80_ = msToSmp(80.0);
+    jitter300_ = msToSmp(300.0);
+    lastStart_ = -guard_;
+    nextTick_ = fs_;
     slots_.resize(p_.slots());
     initStreams();
     sel_.setVoiceSlots(p_.slots(), p_.targetMean());
@@ -138,7 +156,7 @@ void TalkerPlanner::initialPhase() {
                 slots_[j].chainFresh = true;
             }
         } else {
-            slots_[j].nextStart = static_cast<std::int64_t>(u * static_cast<double>(offDuration(slots_[j])));
+            slots_[j].nextStart = fracOf(u, offDuration(slots_[j]));
         }
     }
     std::stable_sort(events_.begin(), events_.end(), [](const PlannedEvent& a, const PlannedEvent& b) {
@@ -146,7 +164,7 @@ void TalkerPlanner::initialPhase() {
     });
     nextId_ = 0;
     for (auto& e : events_) e.ev.eventId = nextId_++;
-    lastStart_ = events_.empty() ? -kGuard : std::max(events_.back().ev.startSample, -kGuard);
+    lastStart_ = events_.empty() ? -guard_ : std::max(events_.back().ev.startSample, -guard_);
     live_.clear();
     for (std::size_t i = 0; i < events_.size(); ++i) live_.push_back(i);
 }
@@ -155,30 +173,30 @@ void TalkerPlanner::addOccupancy(const TalkerEvent& ev, int sign) {
     std::int64_t a = std::max<std::int64_t>(0, ev.startSample);
     const std::int64_t b = ev.endSample;
     while (a < b) {
-        const std::int64_t bin = a / kFs;
-        const std::int64_t e = std::min(b, (bin + 1) * kFs);
+        const std::int64_t bin = a / fs_;
+        const std::int64_t e = std::min(b, (bin + 1) * fs_);
         occ_[static_cast<std::size_t>(bin) % kRing] += sign * (e - a);
         a = e;
     }
 }
 
 void TalkerPlanner::tick() {
-    const std::int64_t k = nextTick_ / kFs;
+    const std::int64_t k = nextTick_ / fs_;
     const std::int64_t lo = std::max<std::int64_t>(0, k - 60);
     std::int64_t sum = 0;
     for (std::int64_t b = lo; b < k; ++b) sum += occ_[static_cast<std::size_t>(b) % kRing];
-    const double meanActive = static_cast<double>(sum) / static_cast<double>((k - lo) * kFs);
+    const double meanActive = static_cast<double>(sum) / static_cast<double>((k - lo) * fs_);
     const double m = std::max(p_.mean, 1e-3);
     lambda_ = std::clamp(lambda_ + 0.02 * (m - meanActive) / m, 0.7, 1.3);
     if (k >= 61) occ_[static_cast<std::size_t>(k - 61) % kRing] = 0;
-    nextTick_ += kFs;
+    nextTick_ += fs_;
 }
 
 void TalkerPlanner::pruneLive() {
     std::erase_if(live_, [&](std::size_t i) {
         PlannedEvent& pe = events_[i];
         // Keep recently ended events a little longer: the end-cluster guard looks back.
-        if (pe.ev.endSample > lastStart_ - kKeepEnded) return false;
+        if (pe.ev.endSample > lastStart_ - keepEnded_) return false;
         if (retention_ == LayoutRetention::None || (retention_ == LayoutRetention::UntilTaken && i < taken_))
             pe.layout.reset();
         return true;
@@ -235,9 +253,10 @@ bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t fla
     if (!pk) { ++stats_.pickFailures; return false; }
 
     const std::int64_t fixedOvl = overlapSamples();
-    const std::int64_t maxLen = sToSmp(p_.segMaxS + 1.5) + msToSmp(p_.fadeOutMs * 1.3) + 8 * kGuard;
+    // Layout limits in the 48 kHz source domain (the layout reports engine samples).
+    const std::int64_t maxLen = sToSrc(p_.segMaxS + 1.5) + msToSrc(p_.fadeOutMs * 1.3) + 8 * msToSrc(40.0);
     auto layout = std::make_shared<ProcessedLayout>(
-        buildProcessedLayout(*snap_, pk->recording, pk->anchor, msToSmp(p_.maxGapMs), maxLen));
+        buildProcessedLayout(*snap_, pk->recording, pk->anchor, msToSrc(p_.maxGapMs), maxLen, fs_));
     const std::int64_t avail = layout->length;
 
     std::int64_t fi, fo;
@@ -298,15 +317,15 @@ bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t fla
     std::int64_t start = t;
     if (residual) {
         const std::int64_t len = fos + fo;
-        std::int64_t elapsed = static_cast<std::int64_t>((1.0 - residualFrac) * static_cast<double>(len));
+        std::int64_t elapsed = fracOf(1.0 - residualFrac, len);
         elapsed = std::clamp<std::int64_t>(elapsed, 0, std::max<std::int64_t>(0, len - sToSmp(0.5)));
         start = t - elapsed;
         for (int tries = 0; tries < 8; ++tries) {  // start anti-synchrony among residual events
             bool conflict = false;
             for (std::size_t i : live_)
-                if (std::llabs(events_[i].ev.startSample - start) < kGuard) conflict = true;
+                if (std::llabs(events_[i].ev.startSample - start) < guard_) conflict = true;
             if (!conflict) break;
-            const std::int64_t sh = kGuard + static_cast<std::int64_t>(global_.uniform01() * 3840.0);
+            const std::int64_t sh = guard_ + fracOf(global_.uniform01(), jitter80_);
             if (t - (start - sh) <= len - sToSmp(0.5)) start -= sh; else start += sh;
         }
     }
@@ -314,12 +333,12 @@ bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t fla
     // End anti-synchrony guard: no two ends within 40 ms (shift the fade-out by +40..120 ms).
     auto endConflict = [&](std::int64_t endAbs) {
         for (std::size_t i : live_)
-            if (events_[i].ev.endSample > t && std::llabs(events_[i].ev.endSample - endAbs) < kGuard) return true;
+            if (events_[i].ev.endSample > t && std::llabs(events_[i].ev.endSample - endAbs) < guard_) return true;
         return false;
     };
     for (int tries = 0; tries < 8; ++tries) {
         if (!endConflict(start + fos + fo)) break;
-        const std::int64_t sh = kGuard + static_cast<std::int64_t>(global_.uniform01() * 3840.0);
+        const std::int64_t sh = guard_ + fracOf(global_.uniform01(), jitter80_);
         if (fos + sh + fo <= avail) fos += sh;
         else if (fos - sh >= fi) fos -= sh;
         else break;
@@ -330,7 +349,7 @@ bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t fla
     // idle slot is out of its cooldown, so the forced start (§4.5) can always cover the drop.
     const std::int64_t spare = static_cast<std::int64_t>(slots_.size()) - static_cast<std::int64_t>(p_.effectiveMin());
     if (stochastic && p_.effectiveMin() > 0 && spare > 0) {
-        const std::int64_t W = msToSmp(p_.reEntryCooldownMs) + kGuard;
+        const std::int64_t W = msToSmp(p_.reEntryCooldownMs) + guard_;
         std::vector<std::int64_t> nearEnds;
         auto clustered = [&](std::int64_t e) {
             nearEnds.clear();
@@ -348,7 +367,7 @@ bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t fla
             return false;
         };
         if (clustered(start + fos + fo)) {
-            const std::int64_t stepS = std::max<std::int64_t>(kGuard, W / 4);
+            const std::int64_t stepS = std::max<std::int64_t>(guard_, (W / (4 * mult_)) * mult_);
             const std::int64_t base = fos;
             for (int k = 1; k <= 24; ++k) {
                 const std::int64_t cand = k <= 12 ? base + k * stepS : base - (k - 12) * stepS;
@@ -430,13 +449,13 @@ void TalkerPlanner::planStochastic(std::int64_t T) {
             std::sort(ends.begin(), ends.end());
             drop = ends.size() < minA ? lastStart_ : ends[ends.size() - minA];
             if (!pendingOverlapValid_) {
-                pendingOverlap_ = msToSmp(p_.overlapMinMs) + static_cast<std::int64_t>(global_.uniform01() * 14400.0);
+                pendingOverlap_ = msToSmp(p_.overlapMinMs) + fracOf(global_.uniform01(), jitter300_);
                 pendingOverlapValid_ = true;
             }
             // Overlap floor of 120 ms: the forced start can then always keep the 40 ms start
             // guard without opening a gap below min.
             const std::int64_t target = drop - std::max(pendingOverlap_, msToSmp(120.0));
-            const std::int64_t lo = std::max({lastStart_ + kGuard, floorTime_, forcedBlockedUntil_});
+            const std::int64_t lo = std::max({lastStart_ + guard_, floorTime_, forcedBlockedUntil_});
             bool found = false;
             for (std::size_t j = 0; j < slots_.size(); ++j) {
                 const std::int64_t ce = cooldownEnd(slots_[j]);
@@ -465,8 +484,8 @@ void TalkerPlanner::planStochastic(std::int64_t T) {
             continue;
         }
         if (tc >= T) break;
-        if (!forced && tc < lastStart_ + kGuard) {  // anti-synchrony: shift by +40..120 ms
-            slots_[js].nextStart = tc + kGuard + static_cast<std::int64_t>(global_.uniform01() * 3840.0);
+        if (!forced && tc < lastStart_ + guard_) {  // anti-synchrony: shift by +40..120 ms
+            slots_[js].nextStart = tc + guard_ + fracOf(global_.uniform01(), jitter80_);
             ++stats_.startShifts;
             continue;
         }
@@ -497,9 +516,9 @@ void TalkerPlanner::planStochastic(std::int64_t T) {
                     if (kb == slots_.size() || slots_[k].nextStart < slots_[kb].nextStart) kb = k;
                 }
                 if (kb < slots_.size()) {
-                    const std::int64_t w = std::max<std::int64_t>(0, X - kGuard);
+                    const std::int64_t w = std::max<std::int64_t>(0, X - guard_);
                     const std::int64_t nt = std::max(cooldownEnd(slots_[kb]),
-                                                     tc + kGuard + static_cast<std::int64_t>(global_.uniform01() * static_cast<double>(w)));
+                                                     tc + guard_ + fracOf(global_.uniform01(), w));
                     if (nt < slots_[kb].nextStart) {
                         slots_[kb].nextStart = nt;
                         slots_[kb].pairedNext = true;
@@ -519,8 +538,8 @@ void TalkerPlanner::planContinuous(std::int64_t T) {
         for (std::size_t k = 0; k < slots_.size(); ++k)
             if (slots_[k].nextStart < t) { t = slots_[k].nextStart; j = k; }
         if (slots_.empty() || t >= T) break;
-        if (slots_[j].chainFresh && t < lastStart_ + kGuard) {
-            slots_[j].nextStart = t + kGuard + static_cast<std::int64_t>(global_.uniform01() * 3840.0);
+        if (slots_[j].chainFresh && t < lastStart_ + guard_) {
+            slots_[j].nextStart = t + guard_ + fracOf(global_.uniform01(), jitter80_);
             ++stats_.startShifts;
             continue;
         }
@@ -532,7 +551,7 @@ void TalkerPlanner::planContinuous(std::int64_t T) {
 }
 
 std::vector<std::uint64_t> TalkerPlanner::replan(const TalkerPlanParams& params, std::int64_t now) {
-    const std::int64_t freeze = now + kFreeze;
+    const std::int64_t freeze = now + freeze_;
     std::vector<std::uint64_t> discarded;
     while (!events_.empty() && events_.back().ev.startSample >= freeze) {
         addOccupancy(events_.back().ev, -1);
@@ -560,11 +579,11 @@ std::vector<std::uint64_t> TalkerPlanner::replan(const TalkerPlanParams& params,
     std::vector<const TalkerEvent*> lastOf(V, nullptr);
     for (const auto& pe : events_)
         if (pe.ev.slot < V) lastOf[pe.ev.slot] = &pe.ev;
-    lastStart_ = -kGuard;
+    lastStart_ = -guard_;
     for (const auto& pe : events_) lastStart_ = std::max(lastStart_, pe.ev.startSample);
     live_.clear();
     for (std::size_t i = 0; i < events_.size(); ++i)
-        if (events_[i].ev.endSample > lastStart_ - kKeepEnded) live_.push_back(i);
+        if (events_[i].ev.endSample > lastStart_ - keepEnded_) live_.push_back(i);
     floorTime_ = freeze;
     pendingOverlapValid_ = false;
     forcedBlockedUntil_ = kNever;
@@ -638,7 +657,7 @@ double TalkerPlanner::estimateBusPowerFactor(double seconds) const {
     SegmentSelector selCopy = sel_;
     TalkerPlanParams pp = p_;
     pp.seed = p_.seed ^ 0xB5AD4ECEDA1CE2A9ULL;
-    TalkerPlanner probe(snap_, selCopy, pp);
+    TalkerPlanner probe(snap_, selCopy, pp, static_cast<double>(fs_));
     probe.setLayoutRetention(LayoutRetention::All);
     const std::int64_t T = sToSmp(seconds);
     probe.planUntil(T);

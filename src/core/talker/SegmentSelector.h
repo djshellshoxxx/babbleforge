@@ -38,6 +38,7 @@ struct SelectorConfig {
     double rotationPeriodS = 1200.0;         // pool rotation (0 = off, e.g. LaboratoryMask)
     double soloRiskWeight = 1.0;             // CVR selection weight of solo-risk anchors
     double segCooldownOverrideS = -1.0;      // >= 0 overrides T_seg,eff (tests)
+    double clockRate = 48000.0;              // planner clock (engine samples per second)
 };
 
 struct SegmentPick {
@@ -97,6 +98,7 @@ public:
     bool importState(const nlohmann::json& j, std::int64_t now);
 
 private:
+    std::int64_t clockSamples(double s) const;
     struct SpeakerState {
         std::vector<std::uint32_t> perm;  // local anchor indices (eligible anchors only)
         std::uint32_t pos = 0, cycle = 0;

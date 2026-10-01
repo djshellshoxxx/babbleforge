@@ -1,7 +1,11 @@
 #pragma once
 // Deterministic discrete-event talker planner (docs/TALKER_ENGINE.md §4, MASK_STRATEGIES §6).
 //
-// Runs ahead of real time on its own int64 sample clock (48 kHz). Decisions depend only on
+// Runs ahead of real time on its own int64 sample clock in engine samples (44.1 / 48 / 88.2 /
+// 96 kHz, TALKER_ENGINE.md §8.1); every duration (fades, guards, cooldowns, segment lengths,
+// freeze window, random shifts) is converted from seconds deterministically (secondsToEngine:
+// rounded at the 44.1 / 48 kHz base rate, x2 at 88.2 / 96 kHz, so the 96 kHz timeline is
+// exactly the 48 kHz one in seconds). Decisions depend only on
 // the parameters, the seed, the corpus snapshot, the selector state and the planner's own
 // history, never on how planUntil() calls are granulated: planUntil(t) commits exactly the
 // events whose start is < t, in start order, and the sequence of committed events is the same
@@ -11,6 +15,8 @@
 // exponential OFF), steady-state initial phase, count controller lambda, forced starts for min,
 // 40 ms anti-synchrony guards on starts and ends, CVR onset pairing, dominance cap and max
 // phrase continuity. FixedK / ContinuousN: always-on chained slots (§4.7).
+#include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -67,12 +73,13 @@ struct PlannerStats {
 
 class TalkerPlanner {
 public:
-    static constexpr std::int64_t kFs = 48000;
-    static constexpr std::int64_t kGuard = 1920;       // 40 ms
-    static constexpr std::int64_t kFreeze = 24000;     // 0.5 s re-plan freeze window
-
+    // fs: engine sample rate (isSupportedBabbleRate()); the planner clock runs in its samples.
     TalkerPlanner(std::shared_ptr<const CorpusSnapshot> snap, SegmentSelector& selector,
-                  const TalkerPlanParams& params);
+                  const TalkerPlanParams& params, double fs = 48000.0);
+
+    std::int64_t sampleRate() const noexcept { return fs_; }
+    std::int64_t guardSamples() const noexcept { return guard_; }    // 40 ms anti-synchrony guard
+    std::int64_t freezeSamples() const noexcept { return freeze_; }  // 0.5 s re-plan freeze window
 
     // Commits all events with startSample < t.
     void planUntil(std::int64_t t);
@@ -119,7 +126,9 @@ private:
         bool pairedNext = false;   // next start was pulled forward by onset pairing
     };
     static constexpr std::int64_t kNever = INT64_MIN / 4;
-    static constexpr std::int64_t kKeepEnded = 3 * kFs;
+    std::int64_t msToSmp(double ms) const;
+    std::int64_t sToSmp(double s) const;
+    std::int64_t fracOf(double f, std::int64_t len) const;
 
     void initStreams();
     void initialPhase();
@@ -136,6 +145,9 @@ private:
     void planContinuous(std::int64_t t);
     int speakingOthersAt(std::int64_t t) const;
 
+    std::int64_t fs_ = 48000, mult_ = 1;  // engine rate; integer multiple of its base rate
+    std::int64_t guard_ = 1920, freeze_ = 24000, keepEnded_ = 3 * 48000;
+    std::int64_t jitter80_ = 3840, jitter300_ = 14400;  // random shift spans (80 / 300 ms)
     std::shared_ptr<const CorpusSnapshot> snap_;
     SegmentSelector& sel_;
     TalkerPlanParams p_;
@@ -147,12 +159,12 @@ private:
     std::vector<std::size_t> live_;  // indices of events with end > lastStart_
     std::size_t taken_ = 0;
     std::uint64_t nextId_ = 0;
-    std::int64_t lastStart_ = -kGuard;
+    std::int64_t lastStart_ = -1920;
     std::int64_t floorTime_ = 0;
     LayoutRetention retention_ = LayoutRetention::UntilTaken;
     // Count controller.
     double lambda_ = 1.0, dOnS_ = 5.0, dOffS_ = 2.0;
-    std::int64_t nextTick_ = kFs;
+    std::int64_t nextTick_ = 48000;
     static constexpr std::size_t kRing = 1024;
     std::vector<std::int64_t> occ_ = std::vector<std::int64_t>(kRing, 0);
     // Forced start state.

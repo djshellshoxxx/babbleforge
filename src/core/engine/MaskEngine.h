@@ -27,8 +27,9 @@
 // preparation and analysis run inside process(), which may allocate. The real-time host
 // (REALTIME_ARCHITECTURE.md §2) moves those parts to their threads; the DSP graph is the same.
 //
-// The babble part requires fs = 48 kHz (the V1 talker planner clock); the stationary part
-// works at every supported rate.
+// The babble part runs at 44.1 / 48 / 88.2 / 96 kHz (planner clock in engine samples; the
+// 48 kHz corpus audio is resampled per event at preload time, never in the RT path); the
+// stationary part works at every supported rate.
 //
 // Real-time mode (cfg.realtime; used by rt/RealtimeEngine, REALTIME_ARCHITECTURE.md §2): the
 // same DSP graph, with the synchronous parts moved off the RT thread:
@@ -198,7 +199,7 @@ struct MaskStatistics {
     // Reliability.
     std::uint64_t underflows = 0, droppedEvents = 0;
     bool sourceErrors = false;
-    bool babbleUnavailable = false;  // a plan needed babble but no corpus / fs != 48 kHz
+    bool babbleUnavailable = false;  // a plan needed babble but no corpus / unsupported fs
 };
 
 nlohmann::json toJson(const MaskStatistics& s);

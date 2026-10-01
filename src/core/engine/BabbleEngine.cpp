@@ -2,15 +2,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 namespace bf {
 
 namespace {
-constexpr std::int64_t kFs = 48000;
-constexpr std::int64_t kTrimCadence = 5 * kFs;   // analysis cadence (REALTIME §8.4)
+constexpr double kTrimCadenceS = 5.0;            // analysis cadence (REALTIME §8.4)
 constexpr std::size_t kTrimWindows = 2;          // 10 s measurement window
 constexpr double kTrimTau = 30.0, kTrimClampDb = 6.0, kTrimSlewDbPerS = 0.5;
-constexpr std::int64_t kTrimFreeze = 10 * kFs;
+constexpr double kTrimFreezeS = 10.0;
 
 SelectorConfig selectorConfigFor(const BabbleEngineConfig& c) {
     SelectorConfig s;
@@ -25,6 +27,7 @@ SelectorConfig selectorConfigFor(const BabbleEngineConfig& c) {
     s.rotationPeriodS = c.plan.mode == PlanMode::ContinuousN ? 0.0 : c.rotationPeriodS;
     s.soloRiskWeight = c.plan.cvrSoloRiskWeight;
     s.segCooldownOverrideS = c.segCooldownOverrideS;
+    s.clockRate = c.fs;
     return s;
 }
 }  // namespace
@@ -33,8 +36,12 @@ BabbleEngine::BabbleEngine(std::shared_ptr<const CorpusSnapshot> snap, IAudioSou
                            const BabbleEngineConfig& cfg)
     : snap_(std::move(snap)), cfg_(cfg), preparer_(source) {
     cfg_.plan.talkerRefDbfs = cfg_.busLevelDbfs;
+    if (!isSupportedBabbleRate(cfg_.fs)) cfg_.fs = 48000.0;  // callers validate; keep a sane clock
+    fs_ = static_cast<std::int64_t>(cfg_.fs);
+    trimCadence_ = static_cast<std::int64_t>(std::llround(kTrimCadenceS * cfg_.fs));
+    trimFreeze_ = static_cast<std::int64_t>(std::llround(kTrimFreezeS * cfg_.fs));
     selector_ = std::make_unique<SegmentSelector>(snap_, selectorConfigFor(cfg_));
-    planner_ = std::make_unique<TalkerPlanner>(snap_, *selector_, cfg_.plan);
+    planner_ = std::make_unique<TalkerPlanner>(snap_, *selector_, cfg_.plan, cfg_.fs);
     if (cfg_.retainLayouts) planner_->setLayoutRetention(TalkerPlanner::LayoutRetention::All);
 
     const std::size_t V = std::max<std::size_t>(cfg_.plan.slots(), 1);
@@ -45,12 +52,12 @@ BabbleEngine::BabbleEngine(std::shared_ptr<const CorpusSnapshot> snap, IAudioSou
         chainStore_.push_back(std::make_unique<BlockChain>());
         freeChains_.push_back(chainStore_.back().get());
     }
-    renderer_.prepare(cfg_.numChannels, maxVoices, pool_.get(), static_cast<double>(kFs), cfg_.externalFeed);
+    renderer_.prepare(cfg_.numChannels, maxVoices, pool_.get(), cfg_.fs, cfg_.externalFeed);
     ptrs_.assign(cfg_.numChannels, nullptr);
     gbnorm_ = computeCountNorm();
     renderer_.setCountNorm(gbnorm_, 0, true);
-    nextTrimUpdate_ = kTrimCadence;
-    trimFrozenUntil_ = kTrimFreeze;
+    nextTrimUpdate_ = trimCadence_;
+    trimFrozenUntil_ = trimFreeze_;
 }
 
 BabbleEngine::~BabbleEngine() = default;
@@ -77,18 +84,18 @@ void BabbleEngine::applyReplan() {
         std::erase_if(pending_, [&](const PlannedEvent& pe) {
             return std::find(discarded.begin(), discarded.end(), pe.ev.eventId) != discarded.end();
         });
-        renderer_.dropStale(planner_->epoch(), r.at + TalkerPlanner::kFreeze);
+        renderer_.dropStale(planner_->epoch(), r.at + planner_->freezeSamples());
     }
     gbnorm_ = computeCountNorm();
     renderer_.setCountNorm(gbnorm_, r.at);
-    trimFrozenUntil_ = r.at + kTrimFreeze;
+    trimFrozenUntil_ = r.at + trimFreeze_;
 }
 
 std::vector<std::uint64_t> BabbleEngine::applyReplanNow(const TalkerPlanParams& params, std::int64_t atSample) {
     TalkerPlanParams p = params;
     p.talkerRefDbfs = cfg_.busLevelDbfs;
     const auto discarded = planner_->replan(p, atSample);
-    if (!discarded.empty()) renderer_.dropStale(planner_->epoch(), atSample + TalkerPlanner::kFreeze);
+    if (!discarded.empty()) renderer_.dropStale(planner_->epoch(), atSample + planner_->freezeSamples());
     gbnorm_ = computeCountNorm();
     renderer_.setCountNorm(gbnorm_, atSample);
     return discarded;
@@ -129,8 +136,8 @@ void BabbleEngine::render(float* const* out, int nCh, int nFrames) {
 
 void BabbleEngine::step(float* const* out, std::size_t n) {
     const std::int64_t end = pos_ + static_cast<std::int64_t>(n);
-    std::int64_t planTo = end + static_cast<std::int64_t>(cfg_.horizonS * static_cast<double>(kFs));
-    if (!replans_.empty()) planTo = std::min(planTo, replans_.front().at + TalkerPlanner::kFreeze);
+    std::int64_t planTo = end + static_cast<std::int64_t>(cfg_.horizonS * cfg_.fs);
+    if (!replans_.empty()) planTo = std::min(planTo, replans_.front().at + planner_->freezeSamples());
     planner_->planUntil(planTo);
     scratch_.clear();
     planner_->takeNew(scratch_);
@@ -205,14 +212,14 @@ void BabbleEngine::updateTrim(float* const* out, std::size_t n) {
     trimAcc_ = 0.0;
     trimAccN_ = 0;
     const std::int64_t now = nextTrimUpdate_;
-    nextTrimUpdate_ += kTrimCadence;
+    nextTrimUpdate_ += trimCadence_;
     if (now < trimFrozenUntil_ || trimWindows_.size() < kTrimWindows) return;
     double p = 0.0;
     for (double w : trimWindows_) p += w;
     p /= static_cast<double>(trimWindows_.size());
     if (!(p > 0.0)) return;
     const double measDb = 10.0 * std::log10(p);
-    const double dt = static_cast<double>(kTrimCadence) / static_cast<double>(kFs);
+    const double dt = static_cast<double>(trimCadence_) / cfg_.fs;
     double step = (cfg_.busLevelDbfs - measDb) * dt / kTrimTau;
     step = std::clamp(step, -kTrimSlewDbPerS * dt, kTrimSlewDbPerS * dt);
     trimDb_ = std::clamp(trimDb_ + step, -kTrimClampDb, kTrimClampDb);

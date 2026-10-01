@@ -115,12 +115,27 @@ TEST_CASE("Sample-rate change 48 kHz -> 44.1 kHz rebuilds and is RUNNING within 
     INFO("rebuild at 44.1 kHz took " << t << " s");
 }
 
-TEST_CASE("Babble plan at 44.1 kHz: reported as engine.rateUnsupported (stationary fallback / Strict ERROR)", "[rt][controller][device]") {
+TEST_CASE("Babble plan at 44.1 kHz runs babble (preload resampling)", "[rt][controller][device][rates]") {
+    auto& src = bftest::shapedCorpus();
+    NullBackend backend;
+    auto cc = baseConfig(backend, bftest::presetDoc("office", "balanced"));
+    cc.sampleRate = 44100.0;
+    withCorpus(cc, src, false);
+    EngineController ctl(cc);
+    REQUIRE(ctl.start() == CommandResult::Ok);
+    REQUIRE(ctl.waitForState(S::Running, 10.0));
+    CHECK(ctl.sampleRate() == 44100.0);
+    CHECK((ctl.degradedReasons() & kDegRateUnsupported) == 0u);
+    CHECK(ctl.currentPlan().babbleEnabled);
+    CHECK(ctl.metrics().babble);
+}
+
+TEST_CASE("Babble plan at 32 kHz: reported as engine.rateUnsupported (stationary fallback / Strict ERROR)", "[rt][controller][device]") {
     auto& src = bftest::shapedCorpus();
     {
         NullBackend backend;
         auto cc = baseConfig(backend, bftest::presetDoc("office", "balanced"));
-        cc.sampleRate = 44100.0;
+        cc.sampleRate = 32000.0;
         withCorpus(cc, src, false);
         EngineController ctl(cc);
         REQUIRE(ctl.start() == CommandResult::Ok);
@@ -135,7 +150,7 @@ TEST_CASE("Babble plan at 44.1 kHz: reported as engine.rateUnsupported (stationa
     {
         NullBackend backend;
         auto cc = baseConfig(backend, bftest::presetDoc("office", "balanced", "stereo", "strict"));
-        cc.sampleRate = 44100.0;
+        cc.sampleRate = 32000.0;
         withCorpus(cc, src, false);
         EngineController ctl(cc);
         REQUIRE(ctl.start() == CommandResult::Ok);

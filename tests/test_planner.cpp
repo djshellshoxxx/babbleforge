@@ -134,8 +134,8 @@ TEST_CASE("Planner: 1 h timeline m=6.5 V=9 meets mean, bounds, guards and cooldo
     std::int64_t minStartGap = INT64_MAX, minEndGap = INT64_MAX;
     for (std::size_t i = 1; i < starts.size(); ++i) minStartGap = std::min(minStartGap, starts[i] - starts[i - 1]);
     for (std::size_t i = 1; i < ends.size(); ++i) minEndGap = std::min(minEndGap, ends[i] - ends[i - 1]);
-    CHECK(minStartGap >= TalkerPlanner::kGuard);
-    CHECK(minEndGap >= TalkerPlanner::kGuard);
+    CHECK(minStartGap >= pl.guardSamples());
+    CHECK(minEndGap >= pl.guardSamples());
 
     // Slot re-entry cooldown and slot exclusivity.
     std::map<std::uint32_t, std::int64_t> lastEnd;
@@ -228,7 +228,7 @@ TEST_CASE("Planner: epoch re-plan keeps frozen events", "[planner]") {
     CHECK(!discarded.empty());
     std::size_t kept = 0;
     for (const auto& pe : before) {
-        if (pe.ev.startSample < now + TalkerPlanner::kFreeze) {
+        if (pe.ev.startSample < now + pl.freezeSamples()) {
             REQUIRE(kept < pl.events().size());
             const auto& k = pl.events()[kept].ev;
             CHECK(k.eventId == pe.ev.eventId);
@@ -244,7 +244,7 @@ TEST_CASE("Planner: epoch re-plan keeps frozen events", "[planner]") {
     pl.planUntil(600 * kFs);
     for (std::size_t i = kept; i < pl.events().size(); ++i) {
         CHECK(pl.events()[i].ev.epoch == 1);
-        CHECK(pl.events()[i].ev.startSample >= now + TalkerPlanner::kFreeze);
+        CHECK(pl.events()[i].ev.startSample >= now + pl.freezeSamples());
         CHECK(pl.events()[i].ev.slot < 6);
     }
     const auto occ = occupancy(pl.events(), 120 * kFs, 600 * kFs);

@@ -11,11 +11,11 @@
 namespace bf::rt {
 
 namespace {
-constexpr std::int64_t kFsB = 48000;  // babble (planner) clock
 constexpr std::size_t kLatBins = 10000;  // 0.1 ms bins, 0..1 s
 
-std::int64_t readyNeed(const TalkerEvent& ev, std::int64_t len) {
-    return std::min(len, std::max(ev.fadeInLen + kFsB, static_cast<std::int64_t>(1.25 * kFsB)));
+// fsB: babble (planner) clock = engine rate.
+std::int64_t readyNeed(const TalkerEvent& ev, std::int64_t len, std::int64_t fsB) {
+    return std::min(len, std::max(ev.fadeInLen + fsB, static_cast<std::int64_t>(1.25 * static_cast<double>(fsB))));
 }
 
 void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(std::max(ms, 1))); }
@@ -76,7 +76,8 @@ bool RealtimeEngine::prepare(double fs, const OutputLayout& layout, int deviceOu
         locked_ = std::make_unique<LockedAudioSource>(*mc.audio);
         mc.audio = locked_.get();
     }
-    const bool wantBabble = plan.babbleEnabled && mc.corpus && mc.audio && fs == 48000.0;
+    fsB_ = static_cast<std::int64_t>(std::llround(fs));
+    const bool wantBabble = plan.babbleEnabled && mc.corpus && mc.audio && isSupportedBabbleRate(fs);
     if (wantBabble) {
         const double V = static_cast<double>(std::max<std::uint32_t>(plan.talkers.slots(), 1));
         const double autoBytes = std::max(128.0 * 1024 * 1024, 1.5 * V * 10.0 * fs * 4.0);
@@ -121,7 +122,7 @@ bool RealtimeEngine::prepare(double fs, const OutputLayout& layout, int deviceOu
         }
     }
     nextMotionB_ = engine_->motionInterval();
-    nextBalanceB_ = kFsB;
+    nextBalanceB_ = fsB_;
     plannerBeatUs_.store(0);
     analysisBeatUs_.store(monotonicMicros());
 
@@ -141,9 +142,9 @@ bool RealtimeEngine::prepare(double fs, const OutputLayout& layout, int deviceOu
                 std::lock_guard<CheckedMutex> lk(jobsMutex_);
                 ready = true;
                 for (const auto& j : jobs_) {
-                    if (j->done || j->dead || j->pe.ev.startSample >= kFsB) continue;
+                    if (j->done || j->dead || j->pe.ev.startSample >= fsB_) continue;
                     if (!j->pushed ||
-                        static_cast<std::int64_t>(j->chain->written()) < readyNeed(j->pe.ev, j->len)) {
+                        static_cast<std::int64_t>(j->chain->written()) < readyNeed(j->pe.ev, j->len, fsB_)) {
                         ready = false;
                         break;
                     }
@@ -286,9 +287,9 @@ void RealtimeEngine::setLimiterCeilingDb(double db) noexcept {
 std::int64_t RealtimeEngine::jobTarget(const Job& j, std::int64_t nowB) const noexcept {
     const TalkerEvent& ev = j.pe.ev;
     if (!j.started && nowB < ev.startSample)
-        return std::min(j.len, ev.fadeInLen + static_cast<std::int64_t>(cfg_.upcomingBeyondFadeInS * kFsB));
+        return std::min(j.len, ev.fadeInLen + static_cast<std::int64_t>(cfg_.upcomingBeyondFadeInS * static_cast<double>(fsB_)));
     const auto readPos = static_cast<std::int64_t>(j.chain->readPosition());
-    return std::min(j.len, std::max(readPos + static_cast<std::int64_t>(cfg_.targetAheadS * kFsB), readyNeed(ev, j.len)));
+    return std::min(j.len, std::max(readPos + static_cast<std::int64_t>(cfg_.targetAheadS * static_cast<double>(fsB_)), readyNeed(ev, j.len, fsB_)));
 }
 
 std::int64_t RealtimeEngine::jobDeadline(const Job& j) const noexcept {
@@ -303,10 +304,10 @@ RealtimeEngine::Job* RealtimeEngine::pickJob(bool urgentOnly, std::int64_t nowB)
         if (j.busy || j.retired || j.failed || j.dead || j.done) continue;
         if (static_cast<std::int64_t>(j.chain->written()) >= jobTarget(j, nowB)) continue;
         std::int64_t dl = jobDeadline(j);
-        if (urgentOnly && dl - nowB >= kFsB) continue;
+        if (urgentOnly && dl - nowB >= fsB_) continue;
         // Low-water boost: an active voice with < 3 s buffered goes before upcoming events.
-        if ((j.started || nowB >= j.pe.ev.startSample) && dl - nowB < static_cast<std::int64_t>(cfg_.lowWaterS * kFsB))
-            dl -= static_cast<std::int64_t>(cfg_.lowWaterS * kFsB);
+        if ((j.started || nowB >= j.pe.ev.startSample) && dl - nowB < static_cast<std::int64_t>(cfg_.lowWaterS * static_cast<double>(fsB_)))
+            dl -= static_cast<std::int64_t>(cfg_.lowWaterS * static_cast<double>(fsB_));
         if (!best || dl < bestDl) {
             best = &j;
             bestDl = dl;
@@ -452,7 +453,7 @@ void RealtimeEngine::substituteFailed(std::int64_t nowB) {
         }
         const std::int64_t len = j.pe.ev.length();
         auto layout = std::make_shared<ProcessedLayout>(buildProcessedLayout(
-            snap, pk->recording, pk->anchor, static_cast<std::int64_t>(std::llround(maxGapMs * 48.0)), len));
+            snap, pk->recording, pk->anchor, static_cast<std::int64_t>(std::llround(maxGapMs * 48.0)), engineToCorpus(len, fsB_) + 1, fsB_));
         sel.commit(*pk, layout->sourcePosAt(std::min(len, layout->length)), j.pe.ev.startSample, j.pe.ev.endSample);
         const double aslOld = snap.segment(j.pe.ev.segment).aslDb, aslNew = snap.segment(pk->segment).aslDb;
         j.pe.ev.segGainLin = static_cast<float>(j.pe.ev.segGainLin * std::pow(10.0, (aslOld - aslNew) / 20.0));
@@ -553,7 +554,7 @@ void RealtimeEngine::plannerStep() {
     adaptLoad(nowB, monotonicMicros());
 
     TalkerPlanner& pl = be->plannerMutable();
-    pl.planUntil(nowB + static_cast<std::int64_t>(cfg_.lookaheadS * kFsB));
+    pl.planUntil(nowB + static_cast<std::int64_t>(cfg_.lookaheadS * static_cast<double>(fsB_)));
     newEvents_.clear();
     pl.takeNew(newEvents_);
     const std::int64_t nowUs = monotonicMicros();
@@ -576,7 +577,7 @@ void RealtimeEngine::plannerStep() {
     }
 
     // Hand events to RT shortly before their start (placement = spatial gains at that time).
-    const auto window = static_cast<std::int64_t>(cfg_.pushWindowS * kFsB);
+    const auto window = static_cast<std::int64_t>(cfg_.pushWindowS * static_cast<double>(fsB_));
     for (std::size_t i = 0; i < jobs_.size(); ++i) {
         Job& j = *jobs_[i];
         if (j.pushed || j.done || j.dead || j.failed || j.retired) continue;
@@ -604,10 +605,10 @@ void RealtimeEngine::plannerStep() {
         engine_->rtUpdateMotion(nextMotionB_);
         nextMotionB_ += mi;
     }
-    if (nowB - nextBalanceB_ > 10 * kFsB) nextBalanceB_ = nowB;
+    if (nowB - nextBalanceB_ > 10 * fsB_) nextBalanceB_ = nowB;
     while (nextBalanceB_ <= nowB) {
         engine_->rtFeedForwardBalance();
-        nextBalanceB_ += kFsB;
+        nextBalanceB_ += fsB_;
     }
 
     // Metrics: lookahead, buffered audio of active voices, queue age, pool use, corpus health.
@@ -620,7 +621,7 @@ void RealtimeEngine::plannerStep() {
         if (j.started && !complete) {
             const std::int64_t buffered = w - static_cast<std::int64_t>(j.chain->readPosition());
             if (minBuf < 0 || buffered < minBuf) minBuf = buffered;
-            if (buffered < static_cast<std::int64_t>(cfg_.warningS * kFsB)) preloadLow_.fetch_add(1, std::memory_order_relaxed);
+            if (buffered < static_cast<std::int64_t>(cfg_.warningS * static_cast<double>(fsB_))) preloadLow_.fetch_add(1, std::memory_order_relaxed);
         }
         if (!j.busy && !j.failed && w < jobTarget(j, nowB)) {
             oldestNeed = std::max(oldestNeed, nowUs - j.needSinceUs);
@@ -629,9 +630,9 @@ void RealtimeEngine::plannerStep() {
         }
     }
     std::erase_if(jobs_, [](const std::unique_ptr<Job>& j) { return j->done; });
-    minBufferedS_.store(minBuf < 0 ? cfg_.targetAheadS : static_cast<double>(minBuf) / kFsB, std::memory_order_relaxed);
+    minBufferedS_.store(minBuf < 0 ? cfg_.targetAheadS : static_cast<double>(minBuf) / static_cast<double>(fsB_), std::memory_order_relaxed);
     oldestNeedAgeS_.store(static_cast<double>(oldestNeed) * 1e-6, std::memory_order_relaxed);
-    lookaheadS_.store(static_cast<double>(pl.frontier() - nowB) / kFsB, std::memory_order_relaxed);
+    lookaheadS_.store(static_cast<double>(pl.frontier() - nowB) / static_cast<double>(fsB_), std::memory_order_relaxed);
 
     const CorpusSnapshot& snap = be->selector().snapshot();
     std::uint64_t poolRecs = 0, poolBad = 0;

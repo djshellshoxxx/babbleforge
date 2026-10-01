@@ -10,6 +10,7 @@
 #include "core/Version.h"
 #include "core/config/AtomicFile.h"
 #include "core/engine/Scenario.h"
+#include "core/talker/SourcePreparer.h"
 
 namespace bf::rt {
 
@@ -467,13 +468,13 @@ EngineController::FallbackOutcome EngineController::applyFallback(const MaskRend
         return o;
     }
     for (const auto& c : o.plan.status.degraded) o.bits |= degradedReasonFromCode(c);
-    if (o.plan.babbleEnabled && fs != 48000.0) {
-        // V1: the talker planner clock is 48 kHz. Report clearly; no internal resampling.
+    if (o.plan.babbleEnabled && !isSupportedBabbleRate(fs)) {
+        // Babble supports 44.1 / 48 / 88.2 / 96 kHz (TALKER_ENGINE §8.1). Report clearly.
         const bool strict = o.plan.fallback == FallbackPolicy::Strict || o.plan.strategyClass == StrategyClass::LaboratoryMask;
         if (strict) {
             o.errorCode = "engine.rateUnsupported";
-            o.message = "babble requires a 48 kHz device rate in V1 (device runs at " + std::to_string(fs) +
-                        " Hz; fallback policy Strict)";
+            o.message = "babble requires a device rate of 44.1, 48, 88.2 or 96 kHz (device runs at " +
+                        std::to_string(fs) + " Hz; fallback policy Strict)";
             return o;
         }
         MaskRenderPlan& p = o.plan;
@@ -485,8 +486,8 @@ EngineController::FallbackOutcome EngineController::applyFallback(const MaskRend
         p.status.degraded.push_back("fallback.stationary");
         p.rehash();
         o.bits |= kDegRateUnsupported | kDegFallbackStationary;
-        o.message = "babble requires a 48 kHz device rate in V1 (device runs at " + std::to_string(fs) +
-                    " Hz): running stationary masking only until multi-rate support";
+        o.message = "babble requires a device rate of 44.1, 48, 88.2 or 96 kHz (device runs at " +
+                    std::to_string(fs) + " Hz): running stationary masking only";
     }
     return o;
 }

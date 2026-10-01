@@ -5,6 +5,19 @@
 #include <cstring>
 #include <random>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+#endif
+
 namespace bf::rt {
 
 std::string_view toString(DeviceEventKind k) noexcept {
@@ -199,6 +212,26 @@ void NullBackend::run() {
     const auto period = std::chrono::duration_cast<clock::duration>(
         std::chrono::duration<double>(static_cast<double>(frames) / fs));
     std::minstd_rand rng(12345u);
+#ifdef _WIN32
+    // The default Windows sleep granularity (~15.6 ms) exceeds a typical callback period and would
+    // register false xruns; a high-resolution waitable timer keeps the simulated device on time.
+    HANDLE hrTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    const auto sleepUntil = [&](clock::time_point t) {
+        if (hrTimer) {
+            const auto d = t - clock::now();
+            if (d <= clock::duration::zero()) return;
+            LARGE_INTEGER due;
+            due.QuadPart = -std::max<long long>(1, std::chrono::duration_cast<std::chrono::nanoseconds>(d).count() / 100);
+            if (SetWaitableTimer(hrTimer, &due, 0, nullptr, nullptr, FALSE)) {
+                WaitForSingleObject(hrTimer, INFINITE);
+                return;
+            }
+        }
+        std::this_thread::sleep_until(t);
+    };
+#else
+    const auto sleepUntil = [](clock::time_point t) { std::this_thread::sleep_until(t); };
+#endif
     auto deadline = clock::now();
     while (!quit_.load(std::memory_order_acquire)) {
         if (const int st = stallMs_.exchange(0, std::memory_order_acq_rel); st > 0) {
@@ -215,7 +248,7 @@ void NullBackend::run() {
                              static_cast<double>(std::minstd_rand::max() - std::minstd_rand::min());
             wake += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(u * jit));
         }
-        std::this_thread::sleep_until(wake);
+        sleepUntil(wake);
         if (quit_.load(std::memory_order_acquire)) break;
         const auto now = clock::now();
         if (now > deadline + (periods_.load(std::memory_order_relaxed) - 1) * period) {  // the device ran dry
@@ -228,6 +261,9 @@ void NullBackend::run() {
         frames_.fetch_add(static_cast<std::uint64_t>(frames), std::memory_order_relaxed);
         deadline += period;
     }
+#ifdef _WIN32
+    if (hrTimer) CloseHandle(hrTimer);
+#endif
     running_.store(false, std::memory_order_release);
 }
 

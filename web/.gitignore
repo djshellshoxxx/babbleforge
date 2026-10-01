@@ -1,0 +1,5 @@
+# Emscripten SDK installed locally / in CI (web/README.md)
+.emsdk/
+# Built site and test dependencies
+dist/
+node_modules/

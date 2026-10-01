@@ -19,6 +19,9 @@ target_compile_definitions(bfcore_tests PRIVATE
   BF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
   BF_TEST_OUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test_out")
 
+# MSVC only exposes M_PI with _USE_MATH_DEFINES.
+target_compile_definitions(bfcore_tests PRIVATE _USE_MATH_DEFINES)
+
 bf_set_warnings(bfcore_tests)
 
 # RT-check test binary (REALTIME_ARCHITECTURE.md §1.3): allocation hooks always linked here;

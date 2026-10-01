@@ -15,7 +15,7 @@ winget install --id Ninja-build.Ninja -e --accept-source-agreements --accept-pac
 winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
 # (or: choco install -y cmake ninja git)
 # Restart the shell once so PATH picks up the new tools, then:
-git clone https://github.com/<owner>/babbleforge.git
+git clone https://github.com/djshellshoxxx/babbleforge.git
 cd babbleforge
 git checkout claude/babbleforge-v1-engine-spec-2ivcgh
 cmake -S . -B build-app -G Ninja -DCMAKE_BUILD_TYPE=Release -DBF_BUILD_APP=ON -DBF_BUILD_TESTS=OFF
@@ -46,7 +46,7 @@ command. Without it, no ASIO driver type exists.
 sudo apt-get update && sudo apt-get install -y build-essential cmake ninja-build git pkg-config \
   libasound2-dev libfreetype-dev libfontconfig1-dev libx11-dev libxext-dev libxrandr-dev \
   libxinerama-dev libxcursor-dev libgl-dev libsqlite3-dev
-git clone https://github.com/<owner>/babbleforge.git && cd babbleforge
+git clone https://github.com/djshellshoxxx/babbleforge.git && cd babbleforge
 git checkout claude/babbleforge-v1-engine-spec-2ivcgh
 cmake -S . -B build-app -G Ninja -DCMAKE_BUILD_TYPE=Release -DBF_BUILD_APP=ON \
   -DBF_SQLITE_USE_SYSTEM=ON -DBF_BUILD_TESTS=OFF

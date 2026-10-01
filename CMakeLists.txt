@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Options
 option(BF_BUILD_TESTS "Build tests" ON)
 option(BF_BUILD_TOOLS "Build tools (bfrender)" ON)
-option(BF_BUILD_APP "JUCE app, later" OFF)
+option(BF_BUILD_APP "JUCE device layer, CLI player and GUI app (fetches JUCE)" OFF)
 option(BF_RT_CHECK "RT-check build: allocation hooks abort/count on RT threads in every executable" OFF)
 
 # Dependencies
@@ -27,4 +27,10 @@ endif()
 # Tools
 if(BF_BUILD_TOOLS)
   add_subdirectory(tools)
+endif()
+
+# JUCE app (CLI player, device backend, GUI shell)
+if(BF_BUILD_APP)
+  include(cmake/Juce.cmake)
+  add_subdirectory(app)
 endif()

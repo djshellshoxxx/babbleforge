@@ -26,12 +26,12 @@ void StationaryMaskEngine::prepare(double fs, std::size_t numChannels, std::uint
 }
 
 bool StationaryMaskEngine::setFilter(const std::vector<float>& h, std::int64_t effectiveSample) {
+    if (channels_.empty()) return true;
+    // One set of spectra shared by every channel (one kernel object per convolver).
+    auto proto = PartitionedKernel::create(h.data(), h.size(), channels_.front()->conv.partitionSize());
+    proto->effectiveSample = effectiveSample;
     bool ok = true;
-    for (auto& ch : channels_) {
-        auto k = PartitionedKernel::create(h.data(), h.size());
-        k->effectiveSample = effectiveSample;
-        ok = ch->conv.postKernel(std::move(k)) && ok;
-    }
+    for (auto& ch : channels_) ok = ch->conv.postKernel(proto->clone()) && ok;
     return ok;
 }
 

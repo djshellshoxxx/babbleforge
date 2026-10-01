@@ -219,3 +219,37 @@ TEST_CASE("Limiter: output independent of block size (bit-exact)", "[limiter]") 
   lim.process(p.data(), p.data(), static_cast<int>(n));
   CHECK(std::memcmp(z[0].data(), ref[0].data(), n * sizeof(float)) == 0);
 }
+
+TEST_CASE("TruePeakDetector: threshold-gated processAbove matches process above the threshold", "[limiter][truepeak]") {
+  for (double fs : {44100.0, 48000.0, 96000.0}) {
+    TruePeakDetector a, b;
+    a.prepare(fs, 1);
+    b.prepare(fs, 1);
+    const float thr = static_cast<float>(dbToLin(-1.0));
+    // Quiet passages with loud bursts (inter-sample peaks near fs/4).
+    std::vector<float> x(48000);
+    for (size_t i = 0; i < x.size(); ++i) {
+      const double env = ((i / 3000) % 4 == 1) ? 1.05 : 0.2;
+      x[i] = static_cast<float>(env * std::sin(2.0 * kPi * (fs / 4.0 + 37.0) * double(i) / fs + 0.785));
+    }
+    std::vector<float> pa(256), pb(256);
+    bool ranSome = false, skippedSome = false;
+    for (size_t off = 0; off < x.size(); off += 256) {
+      const int n = static_cast<int>(std::min<size_t>(256, x.size() - off));
+      a.process(0, x.data() + off, pa.data(), n);
+      const bool ran = b.processAbove(0, x.data() + off, pb.data(), n, thr);
+      ranSome = ranSome || ran;
+      skippedSome = skippedSome || !ran;
+      for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
+        INFO("fs " << fs << " sample " << off + i);
+        if (pa[i] > thr) {
+          CHECK(pb[i] == pa[i]);
+        } else {
+          CHECK(pb[i] <= thr);
+        }
+      }
+    }
+    CHECK(ranSome);
+    CHECK(skippedSome);
+  }
+}

@@ -254,6 +254,7 @@ bool MaskEngine::prepare(double fs, const OutputLayout& layout, int maxBlock, st
     alloc(mix_, pMix_);
     alloc(dev_, pDev_);
     pOut_.resize(N);
+    masterBuf_.assign(kCell, 0.0f);
 
     babble_.reset();
     spatial_.reset();
@@ -288,7 +289,7 @@ bool MaskEngine::setPlan(const MaskRenderPlan& plan, std::int64_t effectiveSampl
 }
 
 int MaskEngine::latencySamples() const noexcept {
-    return static_cast<int>(PartitionedConvolver::kLatency) + (cfg_.limiterStage ? limiter_.latencySamples() : 0);
+    return static_cast<int>(PartitionedKernel::partitionForRate(fs_)) + (cfg_.limiterStage ? limiter_.latencySamples() : 0);
 }
 
 bool MaskEngine::createBabble(const MaskRenderPlan& plan, std::int64_t at) {
@@ -389,10 +390,11 @@ void MaskEngine::designBabbleKernel(std::int64_t at) {
     normalizeForPoolLtass(h, fs_, std::vector<double>(pool.begin(), pool.end()));
     std::vector<float> hf(h.size());
     for (std::size_t i = 0; i < h.size(); ++i) hf[i] = static_cast<float>(h[i]);
-    for (auto& conv : babbleConv_) {
-        auto k = PartitionedKernel::create(hf.data(), hf.size());
-        k->effectiveSample = at;
-        conv->postKernel(std::move(k));
+    if (!babbleConv_.empty()) {
+        // One set of spectra shared by every channel (one kernel object per convolver).
+        auto proto = PartitionedKernel::create(hf.data(), hf.size(), babbleConv_.front()->partitionSize());
+        proto->effectiveSample = at;
+        for (auto& conv : babbleConv_) conv->postKernel(proto->clone());
     }
     ++babbleDesigns_;
 }
@@ -692,9 +694,16 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
             float* x = pBab_[c];
             double g = gainCur_[c];
             const double tg = gainTarget_[c];
-            for (std::size_t i = 0; i < un; ++i) {
-                g += gainCoef_ * (tg - g);
-                x[i] *= static_cast<float>(g);
+            if (g + gainCoef_ * (tg - g) == g) {
+                // Smoother at its fixed point: every sample would get the same gain.
+                const float gf = static_cast<float>(g);
+                if (gf != 1.0f)
+                    for (std::size_t i = 0; i < un; ++i) x[i] *= gf;
+            } else {
+                for (std::size_t i = 0; i < un; ++i) {
+                    g += gainCoef_ * (tg - g);
+                    x[i] *= static_cast<float>(g);
+                }
             }
             gainCur_[c] = g;
             babbleConv_[c]->process(x, x, un);
@@ -757,10 +766,19 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
     // 4. Strategy crossfader: the plan switch is realised by the epoch hand-over, the 2 s
     //    constant-power b ramp and the 100 ms equal-power kernel crossfades (identity here).
     // 5. Master gain (Strength, tau 200 ms) x static gain; source select = MASKER.
-    for (std::size_t i = 0; i < un; ++i) {
-        masterCur_ += masterCoef_ * (masterTarget_ - masterCur_);
-        const float g = static_cast<float>(masterCur_ * staticGain_);
-        for (std::size_t c = 0; c < N; ++c) pMix_[c][i] *= g;
+    if (masterCur_ + masterCoef_ * (masterTarget_ - masterCur_) == masterCur_) {
+        const float g = static_cast<float>(masterCur_ * staticGain_);  // smoother settled
+        if (g != 1.0f)
+            for (std::size_t c = 0; c < N; ++c)
+                for (std::size_t i = 0; i < un; ++i) pMix_[c][i] *= g;
+    } else {
+        float* gb = masterBuf_.data();
+        for (std::size_t i = 0; i < un; ++i) {
+            masterCur_ += masterCoef_ * (masterTarget_ - masterCur_);
+            gb[i] = static_cast<float>(masterCur_ * staticGain_);
+        }
+        for (std::size_t c = 0; c < N; ++c)
+            for (std::size_t i = 0; i < un; ++i) pMix_[c][i] *= gb[i];
     }
     // 5b. Source select: MASKER | CALIBRATION | MUTE (identity while MASKER, bit-identical).
     sourceStage_.process(pMix_.data(), n);

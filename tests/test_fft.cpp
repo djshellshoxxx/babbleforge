@@ -75,3 +75,21 @@ TEST_CASE("RealFft rejects invalid sizes", "[fft]") {
     CHECK(FftD::isValidSize(65536));
     CHECK_THROWS(FftD(100));
 }
+
+TEST_CASE("RealFft planar forwardSplit/inverseSplit are bit-identical to forward/inverse", "[fft]") {
+    for (std::size_t n : {4u, 8u, 512u, 1024u}) {
+        FftF fft(n);
+        RngStream rng(99 + n);
+        std::vector<float> x(n), y1(n), y2(n), re(n / 2 + 1), im(n / 2 + 1);
+        for (auto& v : x) v = static_cast<float>(rng.uniform01() * 2.0 - 1.0);
+        std::vector<std::complex<float>> X(n / 2 + 1);
+        fft.forward(x.data(), X.data());
+        fft.forwardSplit(x.data(), re.data(), im.data());
+        bool same = true;
+        for (std::size_t k = 0; k <= n / 2; ++k) same = same && X[k].real() == re[k] && X[k].imag() == im[k];
+        CHECK(same);
+        fft.inverse(X.data(), y1.data());
+        fft.inverseSplit(re.data(), im.data(), y2.data());
+        CHECK(y1 == y2);
+    }
+}

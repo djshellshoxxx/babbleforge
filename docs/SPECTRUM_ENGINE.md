@@ -157,7 +157,7 @@ Input: target band levels B[k] (26 bands, dB), fs, taps L, lfLimit, hfLimit
 7. Verify: compute the 1/3-oct response of h against white noise (analytic |H|² band integration)
    → max deviation 100 Hz–10 kHz must be ≤ 0.5 dB, else double L (up to 16384) and retry;
      log `spectrum.designDegraded` if still failing
-8. Partition kernel for the convolver (partition = 256 samples), publish via RCU
+8. Partition kernel for the convolver (partition = 256 samples at 44.1/48 kHz, 512 at 88.2/96 kHz), publish via RCU
 ```
 
 - Design time: ≤ 30 ms for L = 4096 on the Mid machine (FFT-based).
@@ -167,10 +167,11 @@ Input: target band levels B[k] (26 bands, dB), fs, taps L, lfLimit, hfLimit
 ### 4.4 Convolver
 
 A uniformly partitioned overlap-save convolver:
-- partition 256
-- FFT size 512
-- frequency-domain delay line of L/256 partitions
-- complex multiply-accumulate in SIMD
+- partition P = 256 at 44.1/48 kHz and 512 at 88.2/96 kHz (the same ≈ 5.3 ms in time; revised during implementation). The kernels at 88.2/96 kHz have twice the taps, so a fixed 256 partition would make the 96 kHz shaper cost 4× the 48 kHz one per second; with P scaled to the rate it costs ≈ 2×, which the ENGINE.md §7 "96 kHz ≤ 2.2 × 48 kHz" budget needs. Latency = P samples.
+- FFT size 2P (in-house radix-2 FFT with a split re/im work buffer and per-stage twiddle tables, so the butterflies vectorise; bit-identical to the textbook loop)
+- frequency-domain delay line of L/P partitions, spectra stored planar (re[], im[], stride P+1 rounded up to 8)
+- complex multiply-accumulate in SIMD (compiler-vectorised planar loop; same per-bin operation order as the scalar form)
+- one set of kernel spectra shared by all channels of a shaper (each channel's convolver holds its own small kernel object for the RCU hand-over), so N channels keep one copy in cache
 
 It is written in-house (or uses `juce::dsp::FFT` with a fixed-size plan) with no allocation after `prepare`. `juce::dsp::Convolution` is not used on the RT path, because its internal loading behavior is not specified for this lock-free kernel-swap protocol.
 

@@ -30,7 +30,7 @@ TEST_CASE("Partitioned convolver equals direct convolution for any block size", 
         h[i] = static_cast<float>((rng.uniform01() - 0.5) * std::exp(-static_cast<double>(i) / 400.0));
     for (auto& v : x) v = static_cast<float>(rng.uniform01() * 2.0 - 1.0);
     // Direct convolution in double, delayed by the fixed latency.
-    const std::size_t lat = PartitionedConvolver::kLatency;
+    const std::size_t lat = PartitionedKernel::kPartition;  // latency at 48 kHz
     std::vector<double> ref(x.size(), 0.0);
     for (std::size_t t = lat; t < x.size(); ++t) {
         const std::size_t tt = t - lat;
@@ -99,11 +99,48 @@ TEST_CASE("Kernel swap crossfades without discontinuity and retires the old kern
     INFO("steady " << steadyA << " / " << steadyB << " during " << during);
     CHECK(during < 1.5 * std::max(steadyA, steadyB));
     // Before the swap the output is +x, after it -x (delayed by the latency).
-    const std::size_t lat = PartitionedConvolver::kLatency;
+    const std::size_t lat = PartitionedKernel::kPartition;  // latency at 48 kHz
     CHECK(std::fabs(y[swapAt] - x[swapAt - lat]) < 1e-5f);
     CHECK(std::fabs(y[total - 1] + x[total - 1 - lat]) < 1e-5f);
     // The crossfade starts at the first 256-grid boundary at/after the effective sample.
     const std::size_t start = ((swapAt + 1000 + 255) / 256) * 256 + lat;
     CHECK(std::fabs(y[start - 1] - x[start - 1 - lat]) < 1e-5f);
     CHECK(std::fabs(y[start + 4800] + x[start + 4800 - lat]) < 1e-5f);
+}
+
+TEST_CASE("Convolver at 96 kHz uses 512-sample partitions and equals direct convolution", "[convolver]") {
+    PartitionedConvolver conv;
+    conv.prepare(96000.0, 4096);
+    REQUIRE(conv.partitionSize() == 512);
+    REQUIRE(conv.latency() == 512);
+    CHECK(PartitionedKernel::partitionForRate(44100.0) == 256);
+    CHECK(PartitionedKernel::partitionForRate(88200.0) == 512);
+    RngStream rng(11);
+    std::vector<float> h(3000), x(30000);
+    for (std::size_t i = 0; i < h.size(); ++i)
+        h[i] = static_cast<float>((rng.uniform01() - 0.5) * std::exp(-static_cast<double>(i) / 800.0));
+    for (auto& v : x) v = static_cast<float>(rng.uniform01() * 2.0 - 1.0);
+    // A 256-partition kernel does not fit a 512-partition convolver.
+    CHECK_FALSE(conv.postKernel(PartitionedKernel::create(h.data(), h.size(), 256)));
+    // Shared spectra: the clone is what the convolver runs.
+    auto proto = PartitionedKernel::create(h.data(), h.size(), conv.partitionSize());
+    auto k = proto->clone();
+    CHECK(k->partition(0) == proto->partition(0));
+    CHECK(k->numPartitions() == 6);
+    proto.reset();  // the clone keeps the spectra alive
+    REQUIRE(conv.postKernel(std::move(k)));
+    std::vector<float> y(x.size());
+    for (std::size_t off = 0; off < x.size(); off += 333) {
+        const std::size_t n = std::min<std::size_t>(333, x.size() - off);
+        conv.process(x.data() + off, y.data() + off, n);
+    }
+    double num = 0.0, den = 0.0;
+    for (std::size_t t = 512; t < x.size(); ++t) {
+        const std::size_t tt = t - 512;
+        double s = 0.0;
+        for (std::size_t j = 0; j < h.size() && j <= tt; ++j) s += static_cast<double>(h[j]) * x[tt - j];
+        num += (y[t] - s) * (y[t] - s);
+        den += s * s;
+    }
+    CHECK(std::sqrt(num / den) < 1e-5);
 }

@@ -7,7 +7,7 @@
 // The gain is smoothed per sample (one-pole, tau = 200 ms) towards a target that is read
 // from an atomic on a 32-sample grid anchored to the absolute sample counter, so the output
 // is bit-identical for every host block size (REALTIME_ARCHITECTURE.md §8.4).
-// Latency: PartitionedConvolver::kLatency (256 samples); the output starts after it.
+// Latency: PartitionedConvolver::latency() (256 samples at <= 50 kHz, 512 above); the output starts after it.
 #include <atomic>
 #include <cstddef>
 #include <cstdint>

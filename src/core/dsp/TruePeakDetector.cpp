@@ -54,6 +54,16 @@ void TruePeakDetector::prepare(double fs, int numChannels) {
     for (int i = 0; i < kTapsPerPhase; ++i)
       coeffs_[static_cast<size_t>(j * kTapsPerPhase + i)] =
           static_cast<float>(h[static_cast<size_t>((kTapsPerPhase - 1 - i) * L + j)]);
+  // |fl(sum c_i w_i)| <= (1 + ~14 u) sum |c_i| |w_i| for this 4-lane, 12-term summation
+  // (u = 2^-24); 1e-5 covers that with a wide margin.
+  gainBound_ = 0.0;
+  for (int j = 0; j < L; ++j) {
+    double l1 = 0.0;
+    for (int i = 0; i < kTapsPerPhase; ++i)
+      l1 += std::fabs(static_cast<double>(coeffs_[static_cast<size_t>(j * kTapsPerPhase + i)]));
+    gainBound_ = std::max(gainBound_, l1);
+  }
+  gainBound_ *= 1.0 + 1e-5;
   hist_.assign(static_cast<size_t>(numCh_) * 2 * kTapsPerPhase, 0.0f);
   pos_.assign(static_cast<size_t>(numCh_), 0);
 }
@@ -87,6 +97,25 @@ float TruePeakDetector::processSample(int ch, float x) noexcept {
 
 void TruePeakDetector::process(int ch, const float* in, float* peakOut, int n) noexcept {
   for (int i = 0; i < n; ++i) peakOut[i] = processSample(ch, in[i]);
+}
+
+bool TruePeakDetector::processAbove(int ch, const float* in, float* peakOut, int n, float threshold) noexcept {
+  float* hist = hist_.data() + static_cast<size_t>(ch) * 2 * kTapsPerPhase;
+  float m = 0.0f;
+  for (int i = 0; i < kTapsPerPhase; ++i) m = std::max(m, std::fabs(hist[i]));
+  for (int i = 0; i < n; ++i) m = std::max(m, std::fabs(in[i]));
+  if (!(static_cast<double>(m) * gainBound_ <= static_cast<double>(threshold))) {
+    process(ch, in, peakOut, n);
+    return true;
+  }
+  int& p = pos_[static_cast<size_t>(ch)];
+  for (int i = 0; i < n; ++i) {
+    hist[p] = in[i];
+    hist[p + kTapsPerPhase] = in[i];
+    p = (p + 1 == kTapsPerPhase) ? 0 : p + 1;
+    peakOut[i] = 0.0f;
+  }
+  return false;
 }
 
 }  // namespace bf

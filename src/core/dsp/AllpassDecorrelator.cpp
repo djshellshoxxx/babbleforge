@@ -5,6 +5,7 @@
 #include <cstring>
 #include <string>
 
+#include "core/math/Restrict.h"
 #include "core/random/Random.h"
 
 namespace bf {
@@ -162,16 +163,28 @@ void AllpassDecorrelator::process(const float* const* in, float* const* out, int
       if (in[c] != out[c] && n > 0) std::memmove(out[c], in[c], sizeof(float) * idx(n));
       continue;
     }
-    for (int i = 0; i < n; ++i) {
-      float x = in[c][i];
-      for (auto& st : ch.st) {
-        const float wd = st.buf[idx(st.pos)];
-        const float w = x + st.g * wd;
-        x = -st.g * w + wd;
-        st.buf[idx(st.pos)] = w;
-        if (++st.pos == st.delay) st.pos = 0;
+    // Stage-major: each all-pass stage filters the whole block in place before the next
+    // (a cascade of causal filters, so this equals the sample-major order bit for bit). A
+    // run of at most `delay` samples up to the ring wrap reads only values written before
+    // it, so the run is element-wise independent and vectorises.
+    if (in[c] != out[c] && n > 0) std::memmove(out[c], in[c], sizeof(float) * idx(n));
+    for (auto& st : ch.st) {
+      const float g = st.g, ng = -st.g;
+      float* BF_RESTRICT y = out[c];
+      int i = 0;
+      while (i < n) {
+        const int len = std::min(n - i, st.delay - st.pos);
+        float* BF_RESTRICT b = st.buf.data() + idx(st.pos);
+        for (int k = 0; k < len; ++k) {
+          const float wd = b[k];
+          const float w = y[i + k] + g * wd;
+          y[i + k] = ng * w + wd;
+          b[k] = w;
+        }
+        i += len;
+        st.pos += len;
+        if (st.pos == st.delay) st.pos = 0;
       }
-      out[c][i] = x;
     }
   }
 }

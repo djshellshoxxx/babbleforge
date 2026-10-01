@@ -5,6 +5,8 @@
 #include <regex>
 #include <system_error>
 
+#include "core/rt/ThreadPriority.h"
+
 namespace bf::rt {
 
 namespace {
@@ -279,6 +281,7 @@ std::vector<std::filesystem::path> Logger::files() const {
 
 void Logger::run() {
     setCurrentThreadName("bf.logger");
+    setCurrentThreadPriority(ThreadPriority::Low);
     while (true) {
         {
             std::unique_lock<CheckedMutex> lk(qMutex_);

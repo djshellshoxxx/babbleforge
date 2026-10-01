@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "core/rt/Denormals.h"
+#include "core/rt/ThreadPriority.h"
 #include "core/talker/SegmentSelector.h"
 
 namespace bf::rt {
@@ -391,6 +392,8 @@ void RealtimeEngine::retireChain(BlockChain* chain) {
 void RealtimeEngine::decodeLoop(bool urgent, int index) {
     static const char* const names[] = {"bf.preload.0", "bf.preload.1", "bf.preload.2", "bf.preload.3"};
     setCurrentThreadName(urgent ? "bf.preload.u" : names[std::clamp(index, 0, 3)]);
+    // Below normal (urgent lane: normal) so preload bursts cannot preempt the audio callback.
+    setCurrentThreadPriority(urgent ? ThreadPriority::Normal : ThreadPriority::BelowNormal);
     BlockPool& pool = engine_->babbleMutable()->pool();
     std::vector<float> buf(BlockPool::kBlockSize);
     while (!quit_.load(std::memory_order_acquire)) {
@@ -796,6 +799,7 @@ void RealtimeEngine::plannerStep() {
 
 void RealtimeEngine::analysisLoop() {
     setCurrentThreadName("bf.analysis");
+    setCurrentThreadPriority(ThreadPriority::BelowNormal);
     while (!quit_.load(std::memory_order_acquire)) {
         analysisStep();
         sleepMs(cfg_.analysisPollMs);

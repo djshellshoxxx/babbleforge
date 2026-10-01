@@ -64,6 +64,8 @@ The audio callback (and every function it calls) is **RT context**.
 
 Named threads (`juce::Thread` with names `bf.control`, `bf.planner` etc.) appear in crash dumps.
 
+The engine applies the "below normal" / "low" rows itself at thread start (`core/rt/ThreadPriority.h`: Linux per-thread nice +5 / +10, Windows thread priority, macOS QoS class): decode/preload (urgent lane stays normal) and analysis run below normal, the logger low. Raising priority above normal needs privileges and is left to the audio driver / host. Without this, preload bursts (decode + resampling, heaviest at 88.2/96 kHz) and analysis ran at the callback's priority and could preempt it on a machine with few free cores: the occasional 0.5–1.2 × buffer-period callback spikes measured at 96 kHz were involuntary context switches in the middle of the DSP (revised during implementation).
+
 ### 2.1 Communication map
 
 ```text
@@ -243,7 +245,7 @@ The real-time path is deterministic up to (and including) the first preload star
 
 - Events are sample-timed.
 - Parameter smoothing is per sample or per fixed 32-sample grid anchored to the absolute sample counter (not to block starts).
-- The convolver partition (256) is independent of the device buffer, because the engine re-blocks internally with a fixed 256-frame FIFO.
+- The convolver partition (256 at 44.1/48 kHz, 512 at 88.2/96 kHz) is independent of the device buffer, because the engine re-blocks internally with a fixed partition-sized FIFO.
 - RCU updates are applied at the first fixed 256-frame grid boundary after their "effective sample" (Control stamps each update with an effective sample time = now + 2048 samples). In offline renders, the same stamps come from the scenario.
 - Analysis-driven updates (spectral correction, trims) are computed from taps and applied at stamped boundaries. In offline renders, the analysis thread runs synchronously at its nominal block cadence (5 s) to keep D2.
 

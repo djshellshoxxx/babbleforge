@@ -120,9 +120,10 @@ void OutputMatrix::processChunk(const float* const* in, float* const* deviceOut,
     for (int i = 0; i < n; ++i) {
       const double g = zf[i] * o.gain.next() * o.mute.next();
       o.line[o.pos] = static_cast<float>(static_cast<double>(x[i]) * g);
-      const std::size_t rd = (o.pos + line - idx(o.delay)) % line;
+      std::size_t rd = o.pos + line - idx(o.delay);  // in [pos + 1, pos + line]: one wrap at most
+      if (rd >= line) rd -= line;
       float v = o.line[rd];
-      o.pos = (o.pos + 1) % line;
+      if (++o.pos == line) o.pos = 0;
       const double f = o.fade.next();
       v = static_cast<float>(static_cast<double>(v) * f) * o.pol;
       if (o.state == Fade::Out && o.fade.rem == 0) {  // fully faded out: jump, then fade in

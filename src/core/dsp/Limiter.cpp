@@ -152,7 +152,8 @@ void Limiter::process(const float* const* in, float* const* out, int n) noexcept
   while (done < n) {
     const int len = std::min(n - done, maxBlock_);
     for (int c = 0; c < nCh_; ++c)
-      det_.process(c, in[c] + done, peaks_.data() + static_cast<size_t>(c) * static_cast<size_t>(maxBlock_), len);
+      det_.processAbove(c, in[c] + done, peaks_.data() + static_cast<size_t>(c) * static_cast<size_t>(maxBlock_), len,
+                        ceilingLin_);  // only peaks above the ceiling are used below
     double blockMinGain = 1.0, lastGain = 1.0;
     std::uint64_t above = 0;
     for (int i = 0; i < len; ++i) {

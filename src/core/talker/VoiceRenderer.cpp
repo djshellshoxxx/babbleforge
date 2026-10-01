@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "core/math/Restrict.h"
+
 namespace bf {
 
 namespace {
@@ -295,25 +297,46 @@ void VoiceRenderer::renderSub(float* const* out, std::size_t offset, std::size_t
             const std::int64_t fi = ev.fadeInLen;
             const std::int64_t fos = ev.fadeOutStart - ev.startSample;
             const std::int64_t foLen = ev.endSample - ev.fadeOutStart;
-            for (std::size_t i = 0; i < cnt; ++i) {
-                const std::int64_t rel = rel0 + static_cast<std::int64_t>(i);
-                double fade = 1.0;
-                if (rel < fi) fade = std::sin(kHalfPi * static_cast<double>(rel) / static_cast<double>(fi));
-                if (rel >= fos && foLen > 0)
-                    fade *= std::cos(kHalfPi * static_cast<double>(rel - fos) / static_cast<double>(foLen));
-                v.gain += coefGain_ * (v.gainTarget - v.gain);
-                gainBuf_[i] = static_cast<float>(v.gain * fade) * src_[i];
+            const std::int64_t relEnd = rel0 + static_cast<std::int64_t>(cnt);
+            float* BF_RESTRICT gb = gainBuf_.data();
+            const float* BF_RESTRICT sp = src_.data();
+            if (rel0 >= fi && (relEnd <= fos || foLen <= 0)) {
+                // No fade in this span (fade == 1.0 exactly): branch-free; once the 20 ms
+                // smoother has reached its fixed point the gain is a constant.
+                if (v.gain + coefGain_ * (v.gainTarget - v.gain) == v.gain) {
+                    const float g = static_cast<float>(v.gain);
+                    for (std::size_t i = 0; i < cnt; ++i) gb[i] = g * sp[i];
+                } else {
+                    for (std::size_t i = 0; i < cnt; ++i) {
+                        v.gain += coefGain_ * (v.gainTarget - v.gain);
+                        gb[i] = static_cast<float>(v.gain) * sp[i];
+                    }
+                }
+            } else {
+                for (std::size_t i = 0; i < cnt; ++i) {
+                    const std::int64_t rel = rel0 + static_cast<std::int64_t>(i);
+                    double fade = 1.0;
+                    if (rel < fi) fade = std::sin(kHalfPi * static_cast<double>(rel) / static_cast<double>(fi));
+                    if (rel >= fos && foLen > 0)
+                        fade *= std::cos(kHalfPi * static_cast<double>(rel - fos) / static_cast<double>(foLen));
+                    v.gain += coefGain_ * (v.gainTarget - v.gain);
+                    gb[i] = static_cast<float>(v.gain * fade) * sp[i];
+                }
             }
             const std::size_t o = offset + static_cast<std::size_t>(a - t0);
+            const float coef = static_cast<float>(coefCh_);
             for (std::size_t c = 0; c < nCh_; ++c) {
                 float g = v.chGain[c];
                 const float tg = v.chTarget[c];
                 if (g <= 1e-5f && tg <= 1e-5f) continue;
-                const float coef = static_cast<float>(coefCh_);
-                float* dst = out[c] + o;
-                for (std::size_t i = 0; i < cnt; ++i) {
-                    g += coef * (tg - g);
-                    dst[i] += g * gainBuf_[i];
+                float* BF_RESTRICT dst = out[c] + o;
+                if (g + coef * (tg - g) == g) {  // pan smoother settled: constant gain
+                    for (std::size_t i = 0; i < cnt; ++i) dst[i] += g * gb[i];
+                } else {
+                    for (std::size_t i = 0; i < cnt; ++i) {
+                        g += coef * (tg - g);
+                        dst[i] += g * gb[i];
+                    }
                 }
                 v.chGain[c] = g;
             }
@@ -324,6 +347,15 @@ void VoiceRenderer::renderSub(float* const* out, std::size_t offset, std::size_t
         ++k;
     }
     // Bus gain: g_bnorm (linear 2 s ramp) x g_btrim (one-pole 20 ms).
+    if (gbRampPos_ >= gbRampLen_ && trimCur_ + coefGain_ * (trimTarget_ - trimCur_) == trimCur_) {
+        const float g = static_cast<float>(gbCur_ * trimCur_);  // both settled: constant
+        if (g != 1.0f)
+            for (std::size_t c = 0; c < nCh_; ++c) {
+                float* dst = out[c] + offset;
+                for (std::size_t i = 0; i < n; ++i) dst[i] *= g;
+            }
+        return;
+    }
     for (std::size_t i = 0; i < n; ++i) {
         if (gbRampPos_ < gbRampLen_) {
             ++gbRampPos_;
@@ -333,8 +365,9 @@ void VoiceRenderer::renderSub(float* const* out, std::size_t offset, std::size_t
         gainBuf_[i] = static_cast<float>(gbCur_ * trimCur_);
     }
     for (std::size_t c = 0; c < nCh_; ++c) {
-        float* dst = out[c] + offset;
-        for (std::size_t i = 0; i < n; ++i) dst[i] *= gainBuf_[i];
+        float* BF_RESTRICT dst = out[c] + offset;
+        const float* BF_RESTRICT gb = gainBuf_.data();
+        for (std::size_t i = 0; i < n; ++i) dst[i] *= gb[i];
     }
 }
 

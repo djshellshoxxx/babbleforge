@@ -28,12 +28,22 @@ class TruePeakDetector {
   /// Block version: peakOut[i] = processSample(ch, in[i]).
   void process(int ch, const float* in, float* peakOut, int n) noexcept;
 
+  /// Threshold-gated block version for consumers that only act on peaks above `threshold`
+  /// (the limiter). If a rigorous bound (max |x| over the filter window x the largest
+  /// per-phase coefficient L1 norm, with a float rounding margin) shows that no output of
+  /// this block can exceed `threshold`, the history is updated and peakOut[] is filled with
+  /// 0 without running the polyphase filters; otherwise peakOut[i] = processSample(ch, in[i]).
+  /// Either way every peakOut[i] > threshold is bit-identical to process(). Returns true if
+  /// the filters ran.
+  bool processAbove(int ch, const float* in, float* peakOut, int n, float threshold) noexcept;
+
  private:
   int factor_ = 4;
   int numCh_ = 0;
   std::vector<float> coeffs_;  // [phase][48], ordered oldest -> newest sample
   std::vector<float> hist_;    // [ch][2 * 48] double-length ring
   std::vector<int> pos_;       // [ch]
+  double gainBound_ = 0.0;     // max over phases of sum |coeff| (x rounding margin)
 };
 
 }  // namespace bf

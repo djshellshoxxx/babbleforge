@@ -382,7 +382,12 @@ bool CalibrationBus::start(const CalibrationParams& p, std::string* error) {
         job->nbuf.assign(static_cast<std::size_t>(noiseCh), std::vector<float>(kChunk, 0.0f));
         for (auto& b : job->nbuf) job->nptr.push_back(b.data());
         // Pre-roll the convolver latency so the first output sample is already signal.
-        job->noise.process(job->nptr.data(), PartitionedConvolver::kLatency);
+        // (256 samples at <= 50 kHz, 512 above), in kChunk pieces (the size of nbuf).
+        for (std::size_t left = PartitionedKernel::partitionForRate(fs_); left > 0;) {
+            const std::size_t m = std::min(left, kChunk);
+            job->noise.process(job->nptr.data(), m);
+            left -= m;
+        }
     }
 
     collectGarbage();

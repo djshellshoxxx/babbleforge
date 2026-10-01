@@ -329,7 +329,7 @@ Measured as **DSP load** = callback processing time ÷ buffer duration on one co
 
 **Cost model (for guidance):**
 - Per talker: ≈ 6 flops/sample/channel-with-nonzero-gain.
-- Per channel: two uniformly-partitioned FFT convolutions (babble 2048 taps, stationary 4096 taps, 256-frame partitions), about 250 flops/sample; decorrelator about 20 flops/sample; limiter about 60 flops/sample.
+- Per channel: two uniformly-partitioned FFT convolutions (babble 2048 taps, stationary 4096 taps, 256-frame partitions; at 88.2/96 kHz twice the taps with 512-frame partitions), about 250 flops/sample; decorrelator about 20 flops/sample; limiter about 60 flops/sample (its true-peak oversampler only runs on blocks whose peak bound can reach the ceiling).
 
 **Benchmark reference machines [I]:**
 

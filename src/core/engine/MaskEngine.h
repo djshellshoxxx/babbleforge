@@ -416,6 +416,7 @@ private:
     // buffers (N x kCell)
     std::vector<std::vector<float>> bab_, sta_, mix_, dev_;
     std::vector<float*> pBab_, pSta_, pMix_, pDev_, pOut_;
+    std::vector<float> masterBuf_;  // kCell per-sample master gain
 
     ITapSink* tapSink_ = nullptr;
     std::int64_t pos_ = 0;

@@ -20,6 +20,9 @@ struct Prefs {
     std::string logLevel = "info";  // trace | debug | info | warn | error
     bool redactLogs = false;        // redact paths in the log files
     bool redactExports = true;      // redact paths / user names in diagnostics exports
+    // Output (OUTPUT > Advanced): requested sample rate / buffer size.
+    double sampleRate = 48000.0;
+    int bufferFrames = 512;
     // Voice library.
     std::string lastImportDir;      // folder of the last import (Rebuild Analysis)
     // First run (GUI §60).

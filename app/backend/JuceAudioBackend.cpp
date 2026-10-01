@@ -149,8 +149,11 @@ std::vector<AudioDeviceInfo> JuceAudioBackend::devices() const {
             i.name = name.toStdString();
             i.id = Impl::makeId(t->getTypeName(), name);
             i.numOutputs = 0;
-            if (std::unique_ptr<juce::AudioIODevice> d{t->createDevice(name, {})})
+            if (std::unique_ptr<juce::AudioIODevice> d{t->createDevice(name, {})}) {
                 i.numOutputs = d->getOutputChannelNames().size();
+                for (int b : d->getAvailableBufferSizes()) i.bufferSizes.push_back(b);
+                for (double r : d->getAvailableSampleRates()) i.sampleRates.push_back(r);
+            }
             out.push_back(std::move(i));
         }
     }

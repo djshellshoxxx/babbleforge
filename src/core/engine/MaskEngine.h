@@ -213,6 +213,26 @@ struct MaskStatistics {
     std::vector<std::uint8_t> slotActive;       // per voice slot: carries a talker now
     bool haveCorrelation = false;
     std::vector<double> adjacentCorrelation;    // whole-run Pearson of output channels c, c+1
+
+    // True time-active fraction per output (GUI ANALYSIS Spatial card): fraction of the 10 ms
+    // frames of the last 60 s in which the output's babble feed (total mix when there is no
+    // babble) exceeded its own Leq - 12 dB gap threshold. Empty until frames exist.
+    std::vector<double> outputActiveFraction;
+    // Read-only per-slot talker view (GUI AREA speaker map). One entry per voice slot that has
+    // carried a talker; `active` = speaking now. azimuthDeg: ring / small multichannel (0 = front,
+    // + = left); pan: stereo (-1 left .. +1 right); home: distributed layouts (output index, -1 none).
+    struct TalkerDot {
+        bool active = false;
+        float azimuthDeg = 0.0f, pan = 0.0f, gain = 0.0f;  // gain: peak linear output gain of the talker (0..1)
+        int home = -1;
+    };
+    std::vector<TalkerDot> talkerDots;
+    int spatialAlgorithm = -1;  // SpatialAlgorithm as int, -1: no babble
+
+    // 1/24-octave smoothed FFT magnitude (dB, expressed per 1/3-octave-band equivalent so that it
+    // is comparable with measuredDb) at kFftViewPoints log-spaced frequencies (fftViewHz(i)).
+    bool haveFftView = false;
+    std::array<float, kFftViewPoints> fftViewDb{};
 };
 
 nlohmann::json toJson(const MaskStatistics& s);
@@ -362,6 +382,16 @@ private:
     // analysis
     SpectrumAnalyzer babbleAnalyzer_, stationaryAnalyzer_;
     SpectralCorrection correction_;
+    // Per-output 10 ms frame activity (analysis thread, under svcMutex_): ring of the last 60 s.
+    struct ActivityTracker {
+        static constexpr std::size_t kFrames = 6000;
+        std::vector<double> acc;               // per channel, current frame
+        std::vector<std::vector<float>> ring;  // per channel, frame powers
+        std::size_t head = 0, filled = 0, pos = 0;
+    };
+    void activityFeed(const float* const* ch, std::size_t N, std::size_t n);
+    ActivityTracker activity_;
+    bool activityFromBabble_ = false;
     ThirdOctArray referenceDb_{};  // ideal band levels of the target (incl. HP/LP)
     bool haveReference_ = false;
     Meters meters_;

@@ -22,6 +22,8 @@ struct AudioDeviceInfo {
     std::string name;
     std::string type;   // driver type, e.g. "Null", "File", "ASIO"
     int numOutputs = 2;
+    std::vector<int> bufferSizes{};      // device-supported buffer sizes (frames); empty: unknown
+    std::vector<double> sampleRates{};   // device-supported sample rates (Hz); empty: unknown
 };
 
 struct BackendOpenResult {

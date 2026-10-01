@@ -412,6 +412,20 @@ CommandResult EngineController::setStrength(double db) {
     return setPreset(doc);
 }
 
+CommandResult EngineController::setAudioFormat(double sampleRate, int bufferFrames) {
+    if (!(sampleRate > 0.0) || bufferFrames < 16) return CommandResult::InvalidArgument;
+    return call([this, sampleRate, bufferFrames] {
+        if (cfg_.sampleRate == sampleRate && cfg_.bufferFrames == bufferFrames) return CommandResult::Ok;
+        log_->log(LogLevel::Info, logcode::kDeviceBufferChange, "audio format changed",
+                  {{"sampleRate", sampleRate}, {"bufferFrames", bufferFrames}});
+        cfg_.sampleRate = sampleRate;
+        cfg_.bufferFrames = bufferFrames;
+        const EngineState s = sm_.state();
+        if (s == EngineState::Ready || masking(s)) beginStop(true, "audio format change", false);
+        return CommandResult::Ok;
+    });
+}
+
 CommandResult EngineController::testSpeakers(bool on) {
     std::lock_guard<CheckedMutex> lk(engineMutex_);
     MaskEngine* me = engine_ ? engine_->engine() : nullptr;

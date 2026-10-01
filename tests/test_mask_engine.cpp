@@ -153,6 +153,56 @@ TEST_CASE("A-LV-2 / A-TM-1 / A-SP-2 (short): babble RMS + mean active talkers + 
     CHECK(r.stats.haveBabbleSpectrum);
     CHECK(r.stats.babbleThirdOctMaxDevDb <= 2.0);
     CHECK(r.stats.babbleOctaveMaxDevDb <= 1.0);
+
+    // GUI feeds: true time-active fraction per output, per-slot talker view, FFT view.
+    REQUIRE(r.stats.outputActiveFraction.size() == 2);
+    for (double f : r.stats.outputActiveFraction) {
+        std::printf("[GUI] output active fraction %.3f\n", f);
+        CHECK(f > 0.5);
+        CHECK(f <= 1.0);
+    }
+    CHECK(r.stats.spatialAlgorithm == static_cast<int>(SpatialAlgorithm::DistributedStereo));
+    int active = 0;
+    for (const auto& d : r.stats.talkerDots) {
+        active += d.active ? 1 : 0;
+        if (d.active) {
+            CHECK(d.pan >= -1.0f);
+            CHECK(d.pan <= 1.0f);
+            CHECK(d.gain > 0.0f);
+        }
+    }
+    CHECK(active >= 3);
+    REQUIRE(r.stats.haveFftView);
+    std::size_t k1k = 0;
+    for (std::size_t i = 0; i < kFftViewPoints; ++i)
+        if (std::fabs(std::log(fftViewHz(i) / 1000.0)) < std::fabs(std::log(fftViewHz(k1k) / 1000.0))) k1k = i;
+    std::size_t b1k = 0;
+    for (std::size_t b = 0; b < kNumThirdOctBands; ++b)
+        if (thirdOctNominalHz()[b] == 1000.0) b1k = b;
+    std::printf("[GUI] FFT view @%.0f Hz %.2f dB vs 1/3-oct band %.2f dB\n", fftViewHz(k1k), r.stats.fftViewDb[k1k],
+                r.stats.measuredDb[b1k]);
+    CHECK(std::fabs(static_cast<double>(r.stats.fftViewDb[k1k]) - r.stats.measuredDb[b1k]) <= 3.0);
+}
+
+TEST_CASE("Output activity: a stationary feed is active in nearly every frame", "[maskengine][gui]") {
+    // Stationary-only engine: constant noise is active in (nearly) every frame.
+    const DataSet& ds = bftest::dataSet();
+    auto doc = bftest::scenarioDoc("office", "speech_noise", "stereo", 3.0, 5);
+    const ScenarioPlan a = buildScenarioPlan(ds, doc["preset"], std::nullopt, CorpusSummary{}, 5);
+    REQUIRE(a.ok);
+    MaskEngineConfig cfg;
+    cfg.seed = 5;
+    MaskEngine eng(cfg);
+    REQUIRE(eng.prepare(48000.0, a.layout, 512));
+    REQUIRE(eng.setPlan(a.plan, 0));
+    std::vector<std::vector<float>> out(2, std::vector<float>(48000 * 3));
+    float* p[2] = {out[0].data(), out[1].data()};
+    eng.process(p, 48000 * 3);
+    const MaskStatistics s = eng.statistics();
+    REQUIRE(s.outputActiveFraction.size() == 2);
+    CHECK(s.outputActiveFraction[0] > 0.9);
+    CHECK(s.talkerDots.empty());
+    CHECK(s.spatialAlgorithm == -1);
 }
 
 TEST_CASE("A-LV-3: hybrid mix constancy and measured babble fraction", "[maskengine][hybrid]") {

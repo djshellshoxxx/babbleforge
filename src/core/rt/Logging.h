@@ -149,6 +149,7 @@ public:
     // Engine sample source for non-RT entries without an explicit sample.
     void setEngineSampleSource(std::function<std::int64_t()> src);
     void setMinLevel(LogLevel l) noexcept { minLevel_.store(l, std::memory_order_relaxed); }
+    LogLevel minLevel() const noexcept { return minLevel_.load(std::memory_order_relaxed); }
 
     // Observation.
     std::vector<nlohmann::json> recent(LogLevel minLevel = LogLevel::Warn) const;  // WARN+ ring

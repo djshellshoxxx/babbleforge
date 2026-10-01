@@ -9,6 +9,11 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 }
 
+double fftViewHz(std::size_t i) noexcept {
+    constexpr double f0 = 31.25, f1 = 16000.0;
+    return f0 * std::pow(f1 / f0, static_cast<double>(i) / static_cast<double>(kFftViewPoints - 1));
+}
+
 OperatingBands operatingSlice(const ThirdOctArray& a) noexcept {
     OperatingBands r{};
     for (std::size_t i = 0; i < kNumOperatingBands; ++i) r[i] = a[kFirstOperatingBand + i];
@@ -58,6 +63,26 @@ void SpectrumAnalyzer::prepare(double fs, std::size_t numChannels) {
             if (e > a) ws.push_back({static_cast<std::uint32_t>(k), (e - a) / df});
         }
     }
+    // FFT view windows: +-1/48 octave around each point; with less than one bin inside, the two
+    // nearest bins are interpolated. scale converts mean bin power to a 1/3-octave-band equivalent.
+    for (std::size_t i = 0; i < kFftViewPoints; ++i) {
+        const double f = fftViewHz(i);
+        const double lo = f * std::pow(2.0, -1.0 / 48.0) / df, hi = f * std::pow(2.0, 1.0 / 48.0) / df;
+        const auto top = static_cast<double>(n_ / 2);
+        auto& pt = fftPts_[i];
+        auto k0 = static_cast<std::uint32_t>(std::ceil(std::min(lo, top)));
+        auto k1 = static_cast<std::uint32_t>(std::floor(std::min(hi, top)));
+        pt.interpFrac = 0.0;
+        if (k1 < k0) {  // no bin centre inside the window
+            const double x = std::min(f / df, top - 1e-6);
+            k0 = static_cast<std::uint32_t>(std::floor(x)) + 1;
+            k1 = k0 - 1;
+            pt.interpFrac = x - std::floor(x);
+        }
+        pt.k0 = k0;
+        pt.k1 = k1;
+        pt.scale = 0.2316 * f / df;  // (2^(1/6) - 2^(-1/6)) f / df bins per 1/3-octave band
+    }
     hopsPerBlock_ = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(kBlockSeconds * fs_ / static_cast<double>(hop_))));
     const double hopSec = static_cast<double>(hop_) / fs_;
     shortAlpha_ = 1.0 - std::exp(-hopSec / kShortTauSeconds);
@@ -74,6 +99,9 @@ void SpectrumAnalyzer::reset() {
     longP_.fill(0.0);
     blockAcc_.fill(0.0);
     overallAcc_.fill(0.0);
+    blockFft_.fill(0.0);
+    longFft_.fill(0.0);
+    overallFft_.fill(0.0);
     haveLong_ = false;
     blocks_.clear();
 }
@@ -121,8 +149,27 @@ void SpectrumAnalyzer::analyseHop() {
         blockAcc_[b] += p[b];
         overallAcc_[b] += p[b];
     }
+    for (std::size_t i = 0; i < kFftViewPoints; ++i) {
+        const auto& pt = fftPts_[i];
+        double v;
+        if (pt.k1 >= pt.k0) {
+            double sum = 0.0;
+            for (std::uint32_t k = pt.k0; k <= pt.k1; ++k) sum += binPower_[k];
+            v = sum / static_cast<double>(pt.k1 - pt.k0 + 1);
+        } else {
+            v = binPower_[pt.k0 - 1] * (1.0 - pt.interpFrac) + binPower_[pt.k0] * pt.interpFrac;
+        }
+        v *= pt.scale;
+        blockFft_[i] += v;
+        overallFft_[i] += v;
+    }
     ++hopCount_;
     if (++blockHops_ >= hopsPerBlock_) {
+        for (std::size_t i = 0; i < kFftViewPoints; ++i) {
+            const double m = blockFft_[i] / static_cast<double>(blockHops_);
+            longFft_[i] = haveLong_ ? longFft_[i] + longAlpha_ * (m - longFft_[i]) : m;
+        }
+        blockFft_.fill(0.0);
         SpectrumBlock blk;
         for (std::size_t b = 0; b < kNumThirdOctBands; ++b) blk.powerLin[b] = blockAcc_[b] / static_cast<double>(blockHops_);
         // window of the last hop ends at (hopCount + 1) * hop samples
@@ -139,6 +186,13 @@ void SpectrumAnalyzer::analyseHop() {
 std::vector<SpectrumBlock> SpectrumAnalyzer::takeBlocks() {
     std::vector<SpectrumBlock> r;
     r.swap(blocks_);
+    return r;
+}
+
+SpectrumAnalyzer::FftView SpectrumAnalyzer::overallFft() const noexcept {
+    FftView r{};
+    if (hopCount_ == 0) return r;
+    for (std::size_t i = 0; i < r.size(); ++i) r[i] = overallFft_[i] / static_cast<double>(hopCount_);
     return r;
 }
 

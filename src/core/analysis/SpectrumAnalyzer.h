@@ -22,6 +22,11 @@
 
 namespace bf {
 
+// FFT view: kFftViewPoints log-spaced points (31.25 Hz .. 16 kHz), each the mean bin power in a
+// 1/24-octave window, scaled to a 1/3-octave-band equivalent (comparable with the band levels).
+inline constexpr std::size_t kFftViewPoints = 200;
+double fftViewHz(std::size_t i) noexcept;
+
 using OperatingBands = std::array<double, kNumOperatingBands>;  // 100 Hz ... 10 kHz
 
 struct SpectrumBlock {
@@ -64,6 +69,10 @@ public:
     const ThirdOctArray& shortTermPower() const noexcept { return shortP_; }  // 1 s exponential
     const ThirdOctArray& longTermPower() const noexcept { return longP_; }    // 60 s exponential
     ThirdOctArray overallPower() const noexcept;                              // mean of all hops
+    // FFT view (linear band-equivalent power per point): 60 s exponential (per 5 s block) and mean of all hops.
+    using FftView = std::array<double, kFftViewPoints>;
+    const FftView& longTermFft() const noexcept { return longFft_; }
+    FftView overallFft() const noexcept;
 
 private:
     template <typename T>
@@ -86,6 +95,10 @@ private:
     bool haveLong_ = false;
     double shortAlpha_ = 1.0, longAlpha_ = 1.0;
     std::vector<SpectrumBlock> blocks_;
+    // FFT view
+    struct FftPoint { std::uint32_t k0, k1; double interpFrac; double scale; };  // k1 < k0: interpolate k0-1..k0
+    std::array<FftPoint, kFftViewPoints> fftPts_{};
+    FftView blockFft_{}, longFft_{}, overallFft_{};
 };
 
 // ---- shape comparison and metrics (section 5.1) ------------------------------------------

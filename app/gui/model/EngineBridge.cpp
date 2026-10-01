@@ -31,6 +31,9 @@ EngineBridge::EngineBridge(Options o) : opt_(std::move(o)), debounce_([this] { f
         backend_ = ownBackend_.get();
     }
     deviceIdShared_ = opt_.deviceId;
+    reqRate_ = opt_.sampleRate;
+    reqBuffer_ = opt_.bufferFrames;
+    logLevel_ = static_cast<int>(opt_.log.minLevel);
     createController(opt_.deviceId);
     if (auto c = controller()) {
         startupPreset_ = c->startupConfig().preset;
@@ -81,16 +84,29 @@ std::shared_ptr<rt::EngineController> EngineBridge::controller() const {
     return ctl_;
 }
 
+void EngineBridge::setLibrary(std::shared_ptr<const CorpusSnapshot> corpus, IAudioSource* audio) {
+    std::lock_guard<std::mutex> lk(ctlMutex_);
+    opt_.corpus = std::move(corpus);
+    opt_.audio = audio;
+    opt_.audioThreadSafe = true;
+}
+
 void EngineBridge::createController(const std::string& deviceId) {
     rt::EngineControllerConfig cfg;
     cfg.dataSet = opt_.dataSet;
-    cfg.corpus = opt_.corpus;
-    cfg.audio = opt_.audio;
-    cfg.audioThreadSafe = opt_.audioThreadSafe;
+    {
+        std::lock_guard<std::mutex> lk(ctlMutex_);  // setLibrary() may run on the message thread
+        cfg.corpus = opt_.corpus;
+        cfg.audio = opt_.audio;
+        cfg.audioThreadSafe = opt_.audioThreadSafe;
+    }
     cfg.backend = backend_;
     cfg.deviceId = deviceId;
     cfg.stateDir = opt_.stateDir;
     cfg.log = opt_.log;
+    cfg.log.minLevel = static_cast<rt::LogLevel>(logLevel_.load());  // the level chosen in Settings, not the startup one
+    cfg.sampleRate = reqRate_.load();
+    cfg.bufferFrames = reqBuffer_.load();
     if (cfg.log.dir.empty() && !opt_.stateDir.empty()) cfg.log.dir = opt_.stateDir / "logs";
     cfg.redactPathsInExports = opt_.redactPathsInExports;
     {
@@ -227,6 +243,24 @@ void EngineBridge::setDevice(const std::string& id) {
     });
 }
 
+void EngineBridge::setLogLevel(rt::LogLevel level) {
+    logLevel_ = static_cast<int>(level);
+    if (auto c = controller()) c->logger().setMinLevel(level);
+}
+
+void EngineBridge::setAudioFormat(double sampleRate, int bufferFrames) {
+    reqRate_ = sampleRate;
+    reqBuffer_ = bufferFrames;
+    post([this, sampleRate, bufferFrames] {
+        auto c = controller();
+        if (!c) return;
+        // A prepare in progress has already read the old values: wait for it, then rebuild.
+        for (int i = 0; i < 400 && c->state() == EngineState::Preparing; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        c->setAudioFormat(sampleRate, bufferFrames);
+    });
+}
+
 void EngineBridge::refreshDevices() {
     post([this] {
         auto devs = backend_->devices();
@@ -236,6 +270,7 @@ void EngineBridge::refreshDevices() {
 }
 
 void EngineBridge::testSpeakers(bool on) {
+    if (on) flushPush();  // a pending preset must not rebuild the engine in the middle of the test
     post([this, on] {
         auto c = controller();
         if (!on) {

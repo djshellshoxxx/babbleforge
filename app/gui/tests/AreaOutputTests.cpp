@@ -9,6 +9,7 @@
 #include "MainComponent.h"
 #include "core/rt/NullBackend.h"
 #include "model/OutputModel.h"
+#include "model/Prefs.h"
 #include "pages/AreaPage.h"
 #include "pages/OutputPage.h"
 
@@ -78,6 +79,8 @@ public:
         limiterStatus(main, state, bridge);
         outputSimple(main, state, bridge);
         testSpeakersAndMeters(main, state, bridge);
+        outputFormat(main, state, bridge, settings);
+        talkerDots(main, state);
         deviceLost(main, state, bridge, backend);
 
         tmp.deleteRecursively();
@@ -257,6 +260,120 @@ private:
         expect(!page->stopTestButton().isVisible() && page->testButton().isVisible(), "TEST SPEAKERS button back");
         // The engine that the test started is stopped again.
         expect(pumpUntil([&] { return bridge.status().state == rt::EngineState::Stopped; }, 10000), "engine stopped after the test");
+    }
+
+    void outputFormat(MainComponent& main, AppState& state, EngineBridge& bridge, AppSettings& settings) {
+        beginTest("OUTPUT Advanced: sample rate and buffer size rebuild the engine and persist");
+        state.setMode(UiMode::Advanced);
+        main.showPage("output");
+        auto* page = dynamic_cast<OutputPage*>(main.page("output"));
+        if (page == nullptr) return;
+        expect(page->sampleRateBox().isVisible() && page->bufferBox().isVisible(), "controls shown in Advanced");
+        expectEquals(page->sampleRateBox().getNumItems(), 4, "44.1 / 48 / 88.2 / 96 kHz");
+        expect(page->sampleRateBox().getItemText(0).contains("44.1") && page->sampleRateBox().getItemText(3).contains("96"));
+        bool inRange = page->bufferBox().getNumItems() >= 5;
+        for (int i = 0; i < page->bufferBox().getNumItems(); ++i) {
+            const int b = page->bufferBox().getItemText(i).getIntValue();
+            inRange = inRange && b >= 64 && b <= 4096;
+        }
+        expect(inRange, "buffer sizes 64..4096");
+        bridge.start();
+        expect(pumpUntil([&] { return bridge.status().state == rt::EngineState::Running || bridge.status().state == rt::EngineState::Degraded; }, 25000), "running");
+        const auto ctl = bridge.controller();
+        const std::size_t before = ctl ? ctl->statusHistory().size() : 0;
+        auto select = [&](juce::ComboBox& box, const juce::String& text) {
+            for (int i = 0; i < box.getNumItems(); ++i)
+                if (box.getItemText(i).startsWith(text)) box.setSelectedItemIndex(i, juce::sendNotificationSync);
+        };
+        select(page->sampleRateBox(), "96");
+        select(page->bufferBox(), "256");
+        expect(pumpUntil([&] { return bridge.status().sampleRate == 96000.0 && bridge.status().bufferFrames == 256 &&
+                                     (bridge.status().state == rt::EngineState::Running || bridge.status().state == rt::EngineState::Degraded); }, 25000),
+               "engine rebuilt at 96 kHz / 256");
+        bool sawStopping = false, sawPreparing = false;
+        if (ctl)
+            for (const auto& ev : ctl->statusHistory()) {
+                if (ev.seq <= before) continue;
+                sawStopping = sawStopping || ev.state == rt::EngineState::Stopping;
+                sawPreparing = sawPreparing || ev.state == rt::EngineState::Preparing;
+            }
+        expect(sawStopping && sawPreparing, "rebuild path: STOPPING -> PREPARING");
+        const Prefs p = loadPrefs(settings.get());
+        expectEquals(p.sampleRate, 96000.0, "sample rate persisted");
+        expectEquals(p.bufferFrames, 256, "buffer size persisted");
+        // Kept across a device change; the page reflects it.
+        bridge.stop();
+        expect(pumpUntil([&] { return bridge.status().state == rt::EngineState::Stopped; }, 15000));
+        bridge.setDevice("Null:Other");
+        expect(bridge.waitIdle(5000));
+        expect(bridge.controller() && bridge.controller()->config().sampleRate == 96000.0 && bridge.controller()->config().bufferFrames == 256,
+               "format kept after a device change");
+        bridge.setDevice("Null:Test Speakers");
+        expect(bridge.waitIdle(5000));
+        pump(100);
+        page->refreshFromState();
+        expect(page->sampleRateBox().getText().contains("96") && page->bufferBox().getText().startsWith("256"), "page shows the stored format");
+        select(page->sampleRateBox(), "48");
+        select(page->bufferBox(), "512");
+        expect(bridge.waitIdle(5000));
+        state.setMode(UiMode::Simple);
+    }
+
+    void talkerDots(MainComponent& main, AppState& state) {
+        beginTest("AREA speaker map: virtual talkers as moving dots");
+        state.setMode(UiMode::Simple);
+        main.showPage("area");
+        auto* page = dynamic_cast<AreaPage*>(main.page("area"));
+        if (page == nullptr) return;
+        auto st = std::make_shared<MaskStatistics>();
+        st->samples = 48000;
+        st->talkerDots.resize(3);
+        // Stereo: pan between the two speakers.
+        click(page->speakerGroup().button(0));
+        page->map().setTalkers(nullptr);
+        expectEquals(page->map().talkerDotCount(), 0, "no dots without data");
+        st->spatialAlgorithm = static_cast<int>(SpatialAlgorithm::DistributedStereo);
+        st->talkerDots[0] = {true, 0.0f, -1.0f, 0.9f, -1};
+        st->talkerDots[1] = {true, 0.0f, 1.0f, 0.5f, -1};
+        st->talkerDots[2] = {false, 0.0f, 0.0f, 0.5f, -1};  // inactive: not drawn
+        page->map().setTalkers(st.get());
+        expectEquals(page->map().talkerDotCount(), 2, "only active talkers");
+        if (page->map().talkerDotCount() == 2) {
+            expect(page->map().talkerDot(0).x < -0.2f && page->map().talkerDot(1).x > 0.2f, "left / right talkers");
+            expect(page->map().talkerDot(0).gain > page->map().talkerDot(1).gain);
+        }
+        // Ring: azimuth on the circle (+90 = left).
+        click(page->speakerGroup().button(1));
+        st->spatialAlgorithm = static_cast<int>(SpatialAlgorithm::SmallMultichannel);
+        st->talkerDots[0] = {true, 90.0f, 0.0f, 1.0f, -1};
+        st->talkerDots[1] = {true, 0.0f, 0.0f, 1.0f, -1};
+        page->map().setTalkers(st.get());
+        if (page->map().talkerDotCount() == 2) {
+            expect(page->map().talkerDot(0).x < -0.5f && std::abs(page->map().talkerDot(0).y) < 0.1f, "azimuth 90 deg = left of the circle");
+            expect(page->map().talkerDot(1).y < -0.5f && std::abs(page->map().talkerDot(1).x) < 0.1f, "azimuth 0 = front");
+        }
+        // Distributed: near the home output.
+        st->spatialAlgorithm = static_cast<int>(SpatialAlgorithm::LargeDistributed);
+        st->talkerDots[0] = {true, 0.0f, 0.0f, 1.0f, 2};
+        st->talkerDots[1] = {false, 0.0f, 0.0f, 1.0f, 0};
+        page->map().setTalkers(st.get());
+        expectEquals(page->map().talkerDotCount(), 1);
+        // The page feeds the dots from the live statistics (<= 15 Hz) while running.
+        EngineStatus es;
+        es.state = rt::EngineState::Running;
+        es.stats = st;
+        pump(100);  // the bridge's own (stopped) status clears the dots and does not use the throttle
+        page->refreshStatus(es);
+        expect(page->map().talkerDotCount() >= 1, "live statistics reach the map");
+        const int dots = page->map().talkerDotCount();
+        st->talkerDots[1].active = true;
+        st->talkerDots[1].home = 1;
+        page->refreshStatus(es);  // inside 1/15 s: throttled
+        expectEquals(page->map().talkerDotCount(), dots, "updates limited to 15 Hz");
+        es.state = rt::EngineState::Stopped;
+        page->refreshStatus(es);
+        expectEquals(page->map().talkerDotCount(), 0, "dots cleared when stopped");
+        click(page->speakerGroup().button(0));
     }
 
     void deviceLost(MainComponent& main, AppState& state, EngineBridge& bridge, rt::NullBackend& backend) {

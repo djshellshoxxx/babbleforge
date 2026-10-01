@@ -209,6 +209,9 @@ bool MaskEngine::prepare(double fs, const OutputLayout& layout, int maxBlock, st
     meters_.prepare(fs, nCh_);
     modulation_.reset();
     levelHist_.assign(kHistBins, 0);
+    activity_.acc.assign(static_cast<std::size_t>(nCh_), 0.0);
+    activity_.ring.assign(static_cast<std::size_t>(nCh_), std::vector<float>(ActivityTracker::kFrames, 0.0f));
+    activity_.head = activity_.filled = activity_.pos = 0;
 
     frameLen_ = static_cast<int>(std::lround(fs / 100.0));
     framePos_ = 0;
@@ -717,6 +720,7 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
             babbleInMix_ += mixer_.zoneFraction(zoneOf_[c]) * e1;
         }
         blockN_ += n;
+        if (babble_) activityFeed(pBab_.data(), N, un);
         if (babble_) babbleAnalyzer_.process(pBab_.data(), un);
         stationaryAnalyzer_.process(pSta_.data(), un);
     }
@@ -732,6 +736,7 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
         for (std::size_t i = 0; i < un; ++i) e += static_cast<double>(pMix_[c][i]) * pMix_[c][i];
         sumT3_[c] += e;
     }
+    if (!rtMode && !babble_) activityFeed(pMix_.data(), N, un);
     for (std::size_t i = 0; i < un && !rtMode; ++i) {
         double e = 0.0;
         for (std::size_t c = 0; c < N; ++c) e += static_cast<double>(pMix_[c][i]) * pMix_[c][i];
@@ -777,6 +782,24 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
     }
     if (!rtMode) meters_.process(pDev_.data(), n);
     if (tapSink_) tapSink_->onTap(3, t0, pDev_.data(), nCh_, n);
+}
+
+// Per-output 10 ms frame powers (babble feed T1 with babble, else the mix T3), last 60 s.
+void MaskEngine::activityFeed(const float* const* ch, std::size_t N, std::size_t n) {
+    if (activity_.acc.size() != N || frameLen_ <= 0) return;
+    const auto fl = static_cast<std::size_t>(frameLen_);
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t c = 0; c < N; ++c) activity_.acc[c] += static_cast<double>(ch[c][i]) * ch[c][i];
+        if (++activity_.pos == fl) {
+            for (std::size_t c = 0; c < N; ++c) {
+                activity_.ring[c][activity_.head] = static_cast<float>(activity_.acc[c] / static_cast<double>(fl));
+                activity_.acc[c] = 0.0;
+            }
+            activity_.head = (activity_.head + 1) % ActivityTracker::kFrames;
+            activity_.filled = std::min(activity_.filled + 1, ActivityTracker::kFrames);
+            activity_.pos = 0;
+        }
+    }
 }
 
 MaskStatistics MaskEngine::statistics() const {
@@ -880,6 +903,44 @@ MaskStatistics MaskEngine::statistics() const {
     s.gapMean60s = ms.gaps.count ? ms.gaps.medianSec : 0.0;
     s.gapMax60s = ms.gaps.maxSec;
     s.slotActive = slotPlaced_;
+    if (activity_.filled >= 100 && activity_.ring.size() == N) {
+        for (std::size_t c = 0; c < N; ++c) {
+            double sum = 0.0;
+            for (std::size_t f = 0; f < activity_.filled; ++f) sum += activity_.ring[c][f];
+            const double thr = sum / static_cast<double>(activity_.filled) * std::pow(10.0, -1.2);  // Leq - 12 dB
+            std::size_t on = 0;
+            for (std::size_t f = 0; f < activity_.filled; ++f) on += activity_.ring[c][f] > thr && sum > 0.0 ? 1 : 0;
+            s.outputActiveFraction.push_back(static_cast<double>(on) / static_cast<double>(activity_.filled));
+        }
+    }
+    if (babble_ && spatial_) {
+        s.spatialAlgorithm = static_cast<int>(spatial_->algorithm());
+        const std::int64_t babbleNow = (cfg_.realtime ? rtPos_.load(std::memory_order_acquire) : pos_) - babbleStart_;
+        std::size_t top = 0;
+        for (std::size_t i = 0; i < slotUsed_.size(); ++i)
+            if (slotUsed_[i]) top = i + 1;
+        s.talkerDots.resize(top);
+        for (std::size_t i = 0; i < top; ++i) {
+            if (!slotUsed_[i]) continue;
+            auto& d = s.talkerDots[i];
+            d.active = slotPlaced_[i] && (!cfg_.realtime || slotStart_[i] <= babbleNow);
+            d.azimuthDeg = static_cast<float>(spatial_->slotAzimuthDeg(static_cast<int>(i)));
+            d.pan = static_cast<float>(spatial_->slotPan(static_cast<int>(i)));
+            d.home = spatial_->slotHome(static_cast<int>(i));
+            float g = 0.0f;
+            for (float v : spatial_->gains(static_cast<int>(i))) g = std::max(g, v);
+            d.gain = g;
+        }
+    }
+    {
+        const SpectrumAnalyzer& fa = babble_ && babbleAnalyzer_.hasLongTerm() ? babbleAnalyzer_ : stationaryAnalyzer_;
+        const bool useBabble = babble_ && babbleAnalyzer_.hasLongTerm();
+        if (haveReference_ && (useBabble || stationaryAnalyzer_.numHops() > 0)) {
+            const SpectrumAnalyzer::FftView v = useBabble ? fa.longTermFft() : fa.overallFft();
+            s.haveFftView = true;
+            for (std::size_t i = 0; i < v.size(); ++i) s.fftViewDb[i] = static_cast<float>(powDb(v[i]));
+        }
+    }
     if (cfg_.realtime && N > 1 && pos > 0) {
         s.haveCorrelation = true;
         for (std::size_t c = 0; c + 1 < N && c < xyT4_.size(); ++c) {
@@ -1066,7 +1127,10 @@ void MaskEngine::rtAnalyzeTap(int tap, std::int64_t start, const float* const* c
                 anaPtr_[c] = ch[c] + off;
             }
             blockN_ += m;
-            if (babble_) babbleAnalyzer_.process(anaPtr_.data(), um);
+            if (babble_) {
+                activityFeed(anaPtr_.data(), N, um);
+                babbleAnalyzer_.process(anaPtr_.data(), um);
+            }
             off += m;
             const std::int64_t now = t + m;
             while (now >= nextBlock_) {
@@ -1087,6 +1151,7 @@ void MaskEngine::rtAnalyzeTap(int tap, std::int64_t start, const float* const* c
     }
     case 2: {  // T3: mix level, 10 ms envelope histogram, modulation / gaps
         for (std::size_t c = 0; c < N; ++c) sumT3_[c] += sq(ch[c], static_cast<std::size_t>(n));
+        if (!babble_) activityFeed(ch, N, static_cast<std::size_t>(n));
         for (int i = 0; i < n; ++i) {
             double e = 0.0;
             for (std::size_t c = 0; c < N; ++c) e += static_cast<double>(ch[c][i]) * ch[c][i];

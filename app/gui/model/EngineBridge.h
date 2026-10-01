@@ -85,6 +85,8 @@ public:
         int uiHz = 30;
         int statusPollMs = 50;
         rt::LoggerConfig log;                  // log level / redaction (Settings); dir empty: <stateDir>/logs
+        double sampleRate = 48000.0;           // requested output rate / buffer (OUTPUT > Advanced, settings)
+        int bufferFrames = 512;
         bool redactPathsInExports = true;
     };
 
@@ -110,6 +112,13 @@ public:
     void reset();
     void setDevice(const std::string& deviceId);  // stops, recreates the controller on the new device
     void refreshDevices();                          // async; listeners get a status update
+    // OUTPUT > Advanced: requested sample rate / buffer size. Kept across device changes and
+    // controller re-creation; a running engine rebuilds (STOPPING with fade -> PREPARING).
+    void setAudioFormat(double sampleRate, int bufferFrames);
+    double requestedSampleRate() const noexcept { return reqRate_.load(); }
+    int requestedBufferFrames() const noexcept { return reqBuffer_.load(); }
+    // Settings > Logging: applies now and to every controller created later (device changes).
+    void setLogLevel(rt::LogLevel level);
     // TEST SPEAKERS / STOP TEST (GUI §23). Starts the engine first when it is stopped and stops
     // it again when the test ends.
     void testSpeakers(bool on);
@@ -137,6 +146,9 @@ public:
     void removeListener(Listener* l) { listeners_.remove(l); }
 
     std::shared_ptr<rt::EngineController> controller() const;
+    // The voice library changed (hot reload): controllers created later (device change) start from it.
+    // `audio` must outlive the bridge or the next call (the caller keeps the LoadedCorpus alive).
+    void setLibrary(std::shared_ptr<const CorpusSnapshot> corpus, IAudioSource* audio);
 
 private:
     void timerCallback() override;
@@ -167,6 +179,8 @@ private:
     std::optional<Preset> pendingPreset_;
     bool workerBusy_ = false;
     std::atomic<bool> quit_{false};
+    std::atomic<double> reqRate_{48000.0};
+    std::atomic<int> reqBuffer_{512}, logLevel_{static_cast<int>(rt::LogLevel::Info)};
     std::thread worker_, status_;
 
     // Shared snapshot (status thread -> UI).

@@ -34,6 +34,8 @@ public:
     juce::Label& testLabel() { return testInfo_; }
     juce::ToggleButton& limiterToggle() { return limiterOn_; }
     juce::Slider& ceilingSlider() { return ceiling_; }
+    juce::ComboBox& sampleRateBox() { return rate_; }  // Advanced: requested sample rate
+    juce::ComboBox& bufferBox() { return buffer_; }    // Advanced: requested buffer size
     juce::Label& readout(const juce::String& name);  // "RMS", "LUFS-S", "True Peak", "Limiter", "Driver", ...
     int meterCount() const { return static_cast<int>(meters_.size()); }
     ChannelMeter& meter(int i) { return *meters_[static_cast<std::size_t>(i)]; }
@@ -41,6 +43,8 @@ public:
 private:
     void fillDevices();
     void rebuildMeters();
+    void fillFormatBoxes();
+    void applyFormat();
     struct Readout {
         juce::String name;
         std::unique_ptr<SectionLabel> caption;
@@ -68,6 +72,11 @@ private:
     // Advanced.
     SectionLabel techCaption_{"MASTER LEVEL METERS", true}, devInfoCaption_{"AUDIO DEVICE", true}, limiterCaption_{"OUTPUT LIMITER", true};
     std::vector<Readout> readouts_;
+    SectionLabel rateCaption_{"SAMPLE RATE"}, bufferCaption_{"BUFFER SIZE"};
+    juce::ComboBox rate_, buffer_;
+    juce::Label formatNote_;
+    std::vector<double> rateValues_;
+    std::vector<int> bufferValues_;
     juce::ToggleButton limiterOn_{"Enabled"};
     juce::Slider ceiling_;
     juce::Label ceilingLabel_;

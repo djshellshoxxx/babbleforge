@@ -186,6 +186,13 @@ void AnalysisPage::SpectrumView::set(SpecMode m, const std::array<double, 26>& r
     repaint();
 }
 
+void AnalysisPage::SpectrumView::setFft(const std::array<float, kFftViewPoints>* fftDb, double offsetDb) {
+    haveFft_ = fftDb != nullptr;
+    if (fftDb) fft_ = *fftDb;
+    fftOffset_ = offsetDb;
+    repaint();
+}
+
 void AnalysisPage::SpectrumView::paint(juce::Graphics& g) {
     const auto& t = Theme::get();
     auto r = getLocalBounds().toFloat();
@@ -200,15 +207,24 @@ void AnalysisPage::SpectrumView::paint(juce::Graphics& g) {
     } else {
         for (std::size_t b = kFirstBand; b <= kLastBand; ++b) hz[n++] = thirdOctNominalHz()[b];
     }
+    const bool fftMode = mode_ == SpecMode::Fft;
+    const double fMin = hz[0] / 1.15, fMax = hz[n - 1] * 1.15;
     double lo = 1e9, hi = -1e9;
     for (std::size_t i = 0; i < n; ++i) {
         lo = std::min(lo, ref_[i]);
         hi = std::max(hi, ref_[i]);
-        if (haveMeas_) {
+        if (haveMeas_ && !fftMode) {
             lo = std::min(lo, meas_[i]);
             hi = std::max(hi, meas_[i]);
         }
     }
+    if (fftMode && haveFft_)
+        for (std::size_t i = 0; i < kFftViewPoints; ++i) {
+            const double f = fftViewHz(i);
+            if (f < fMin || f > fMax) continue;
+            lo = std::min(lo, fft_[i] - fftOffset_);
+            hi = std::max(hi, fft_[i] - fftOffset_);
+        }
     lo = std::floor((lo - 3.0) / 5.0) * 5.0;
     hi = std::ceil((hi + 3.0) / 5.0) * 5.0;
     const double f0 = hz[0] / 1.15, f1 = hz[n - 1] * 1.15;
@@ -249,11 +265,25 @@ void AnalysisPage::SpectrumView::paint(juce::Graphics& g) {
             for (std::size_t i = 0; i < n; ++i) g.fillEllipse(juce::Rectangle<float>(5.0f, 5.0f).withCentre({xOf(hz[i]), yOf(v[i])}));
     };
     curve(ref_, t.textDim, true, 1.8f);
-    if (haveMeas_) curve(meas_, t.accentStrong, false, 2.2f);
+    if (fftMode && haveFft_) {
+        // Real FFT magnitude (1/24 octave smoothing), clipped to the plotted frequency range.
+        juce::Path p;
+        bool started = false;
+        for (std::size_t i = 0; i < kFftViewPoints; ++i) {
+            const double f = fftViewHz(i);
+            if (f < fMin || f > fMax) continue;
+            const juce::Point<float> pt(xOf(f), juce::jlimit(plot.getY(), plot.getBottom(), yOf(fft_[i] - fftOffset_)));
+            if (!started) p.startNewSubPath(pt);
+            else p.lineTo(pt);
+            started = true;
+        }
+        g.setColour(t.accentStrong);
+        g.strokePath(p, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved));
+    } else if (haveMeas_ && !fftMode) curve(meas_, t.accentStrong, false, 2.2f);
     else {
         g.setColour(t.textFaint);
         g.setFont(fonts::body(13.0f));
-        g.drawText("No measurement yet", plot, juce::Justification::centred);
+        g.drawText(fftMode ? "No FFT data yet" : "No measurement yet", plot, juce::Justification::centred);
     }
 }
 
@@ -274,7 +304,7 @@ AnalysisPage::SpectrumCard::SpectrumCard()
     }
     modes_[0].setTooltip("Seven octave bands, 125 Hz to 8 kHz.");
     modes_[1].setTooltip("Finer detail: 19 one-third-octave bands.");
-    modes_[2].setTooltip("Smooth curve through the measured bands.");
+    modes_[2].setTooltip("Measured FFT magnitude, smoothed to 1/24 octave.");
     const auto& t = Theme::get();
     styleLabel(errorLabel, fonts::body(14.5f), t.text, juce::Justification::centredLeft);
     styleLabel(deviationLabel, fonts::body(14.5f), t.text, juce::Justification::centredLeft);
@@ -302,7 +332,7 @@ void AnalysisPage::SpectrumCard::refresh() {
     bool have = false;
     SpectrumMetrics m;
     if (stats_ && stats_->haveSpectrumView) {
-        m = computeSpectrumMetrics(stats_->referenceDb, stats_->measuredDb, mode_, &aligned);
+        m = computeSpectrumMetrics(stats_->referenceDb, stats_->measuredDb, mode_ == SpecMode::Fft ? SpecMode::ThirdOctave : mode_, &aligned);
         have = m.valid;
         if (mode_ == SpecMode::Octave) {
             const OctaveArray ro = octaveFromThirdOct(stats_->referenceDb);
@@ -320,6 +350,9 @@ void AnalysisPage::SpectrumCard::refresh() {
         }
     }
     view.set(mode_, ref, aligned, have);
+    if (mode_ == SpecMode::Fft && have && stats_->haveFftView)
+        view.setFft(&stats_->fftViewDb, stats_->measuredDb[kFirstBand] - aligned[0]);  // same offset as the bands
+    else view.setFft(nullptr, 0.0);
     if (have) {
         errorLabel.setText("Average target error  " + juce::String(m.avgErrorDb, 1) + " dB", juce::dontSendNotification);
         deviationLabel.setText("Largest deviation  " + juce::String(m.maxDevDb, 1) + " dB at " + hzText(m.maxDevHz),
@@ -539,12 +572,10 @@ int AnalysisPage::SpatialCard::preferredHeight() const { return details_ ? 380 :
 void AnalysisPage::SpatialCard::setStats(const MaskStatistics* s) {
     const auto& t = Theme::get();
     std::vector<double> pct;
-    const bool have = s && s->samples > 0 && !s->outputRmsChDb.empty();
-    if (have) {
-        double mx = -1e9;
-        for (const double v : s->outputRmsChDb) mx = std::max(mx, v);
-        for (const double v : s->outputRmsChDb) pct.push_back(v < -150.0 ? 0.0 : 100.0 * std::pow(10.0, (v - mx) / 10.0));
-    }
+    // True time-active fraction (engine: 10 ms frames of the last 60 s above the output's Leq - 12 dB).
+    const bool have = s && s->samples > 0 && !s->outputActiveFraction.empty();
+    if (have)
+        for (const double v : s->outputActiveFraction) pct.push_back(100.0 * juce::jlimit(0.0, 1.0, v));
     map.set(std::move(pct), have);
     if (s && s->haveCorrelation && !s->adjacentCorrelation.empty()) {
         double mx = 0.0;

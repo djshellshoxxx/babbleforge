@@ -23,6 +23,10 @@ Prefs loadPrefs(const AppSettingsData& d) {
     p.restorePrevious = getBool(j, "restorePrevious", p.restorePrevious);
     p.rememberDevice = getBool(j, "rememberDevice", p.rememberDevice);
     p.logLevel = getStr(j, "logLevel", p.logLevel);
+    if (j.is_object() && j.contains("sampleRate") && j["sampleRate"].is_number()) p.sampleRate = j["sampleRate"].get<double>();
+    if (j.is_object() && j.contains("bufferFrames") && j["bufferFrames"].is_number_integer()) p.bufferFrames = j["bufferFrames"].get<int>();
+    if (!(p.sampleRate >= 8000.0 && p.sampleRate <= 384000.0)) p.sampleRate = 48000.0;
+    if (p.bufferFrames < 16 || p.bufferFrames > 16384) p.bufferFrames = 512;
     p.redactLogs = getBool(j, "redactLogs", p.redactLogs);
     p.redactExports = getBool(j, "redactExports", p.redactExports);
     p.lastImportDir = getStr(j, "lastImportDir", p.lastImportDir);
@@ -40,7 +44,8 @@ void savePrefs(AppSettings& s, const Prefs& p) {
                             {"restorePrevious", p.restorePrevious}, {"rememberDevice", p.rememberDevice},
                             {"logLevel", p.logLevel},             {"redactLogs", p.redactLogs},
                             {"redactExports", p.redactExports},   {"lastImportDir", p.lastImportDir},
-                            {"firstRunDone", p.firstRunDone}};
+                            {"firstRunDone", p.firstRunDone},     {"sampleRate", p.sampleRate},
+                            {"bufferFrames", p.bufferFrames}};
     });
 }
 

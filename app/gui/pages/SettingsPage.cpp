@@ -189,7 +189,7 @@ SettingsPage::SettingsPage(PageContext& c) : Page(c) {
         if (i < 0 || i >= 5) return;
         const std::string id = kLevelIds[i];
         updatePrefs(ctx.settings, [&](Prefs& p) { p.logLevel = id; });
-        if (auto c2 = ctx.bridge.controller()) c2->logger().setMinLevel(levelOf(id));
+        ctx.bridge.setLogLevel(levelOf(id));  // also kept for controllers created by a device change
     };
     addAndMakeVisible(logLevel_);
     addAndMakeVisible(levelHelp_);

@@ -54,7 +54,7 @@ FirstRunWizard::FirstRunWizard(AppState& state, AppSettings& settings, EngineBri
         noFocus(*b);
         addAndMakeVisible(*b);
     }
-    test_.setTooltip("Plays the masking sound briefly through the selected output.");
+    test_.setTooltip("Plays a short identification tone on each speaker in turn. Press again to stop.");
     test_.onClick = [this] { testOutput(); };
     next_.onClick = [this] { next(); };
     back_.onClick = [this] { back(); };
@@ -74,7 +74,7 @@ FirstRunWizard::FirstRunWizard(AppState& state, AppSettings& settings, EngineBri
 
 FirstRunWizard::~FirstRunWizard() {
     stopTimer();
-    if (testing_) bridge_.stop();
+    if (testing_) bridge_.testSpeakers(false);
 }
 
 void FirstRunWizard::showPage(int p) {
@@ -137,11 +137,7 @@ void FirstRunWizard::next() {
         finish(true);
         return;
     }
-    if (page_ == 1 && testing_) {
-        testing_ = false;
-        stopTimer();
-        bridge_.stop();
-    }
+    if (page_ == 1 && testing_) stopTest();
     showPage(page_ + 1);
 }
 
@@ -160,34 +156,42 @@ void FirstRunWizard::selectArea(const std::string& areaId) {
 
 void FirstRunWizard::testOutput() {
     if (deviceId_.empty()) return;
-    if (testing_) return;
-    bridge_.setDevice(deviceId_);
-    bridge_.start();
+    if (testing_) {  // the button reads "Stop test" while the sequence runs
+        stopTest();
+        return;
+    }
+    // TEST SPEAKERS (CalibrationBus ChannelId): channel-identification pink bursts, one output at
+    // a time, ending with STOP. Starts the engine on the selected device when needed.
+    if (deviceId_ != bridge_.deviceId()) bridge_.setDevice(deviceId_);
+    bridge_.testSpeakers(true);
     testing_ = true;
-    test_.setEnabled(false);
-    test_.setButtonText("Testing...");
-    testEndMs_ = juce::Time::getMillisecondCounterHiRes() + 3000.0;
+    testSeenRunning_ = false;
+    test_.setButtonText("Stop test");
+    testEndMs_ = juce::Time::getMillisecondCounterHiRes() + 30000.0;  // engine start + sequence guard
     startTimerHz(10);
 }
 
+void FirstRunWizard::stopTest() {
+    if (!testing_) return;
+    testing_ = false;
+    stopTimer();
+    bridge_.testSpeakers(false);
+    test_.setEnabled(true);
+    test_.setButtonText("Test");
+}
+
 void FirstRunWizard::timerCallback() {
-    if (testing_ && juce::Time::getMillisecondCounterHiRes() >= testEndMs_) {
-        testing_ = false;
-        stopTimer();
-        bridge_.stop();
-        test_.setEnabled(true);
-        test_.setButtonText("Test");
-    }
+    if (!testing_) return;
+    const bool running = bridge_.status().out.testRunning;
+    testSeenRunning_ = testSeenRunning_ || running;
+    if ((testSeenRunning_ && !running) || juce::Time::getMillisecondCounterHiRes() >= testEndMs_) stopTest();  // sequence finished
 }
 
 void FirstRunWizard::finish(bool start) {
     if (finished_) return;
     finished_ = true;
     stopTimer();
-    if (testing_) {
-        testing_ = false;
-        bridge_.stop();
-    }
+    stopTest();
     if (!areaId_.empty() && (state_.preset().area != areaId_ || state_.preset().strategy != "balanced")) {
         state_.setArea(areaId_);
         state_.setStrategy("balanced");

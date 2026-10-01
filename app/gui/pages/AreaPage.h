@@ -59,6 +59,7 @@ private:
     SectionLabel mapCaption_{"SPEAKER MAP"};
     SpeakerMap map_;
     std::vector<float> activity_;
+    double lastTalkerMs_ = 0.0;
 
     // Advanced (GUI §33-§37).
     SectionLabel spatialCaption_{"SPATIAL OUTPUT", true}, speakersListCaption_{"SPEAKER ASSIGNMENT"}, zonesCaption_{"ZONES"};

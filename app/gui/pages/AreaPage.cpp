@@ -366,6 +366,17 @@ void AreaPage::refreshStatus(const EngineStatus& s) {
         activity_ = a;
         map_.setActivity(activity_);
     }
+    // Virtual talker dots (live updates <= 15 Hz; cleared at once when masking is not running).
+    const bool live = s.state == rt::EngineState::Running || s.state == rt::EngineState::Degraded;
+    if (!live) {
+        if (map_.talkerDotCount() > 0) map_.setTalkers(nullptr);
+        return;
+    }
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - lastTalkerMs_ >= 1000.0 / 15.0 - 1.0) {
+        lastTalkerMs_ = now;
+        map_.setTalkers(s.stats.get());
+    }
 }
 
 int AreaPage::layoutPage(int width) {

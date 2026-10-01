@@ -97,6 +97,7 @@ public:
         AppSettings settings({});
         rt::NullBackend backend;
         backend.addDevice({"Null:Test Speakers", "Test Speakers", "Null", 2});
+        backend.addDevice({"Null:Other", "Other Device", "Null", 4});
         EngineBridge::Options o;
         o.dataSet = &ds;
         o.backend = &backend;
@@ -150,6 +151,9 @@ private:
         s->modulationDepth10s = 0.8;
         s->crest60sDb = 9.5;
         s->outputRmsChDb = {-30.0, -30.4, -31.1, -30.8};
+        s->outputActiveFraction = {0.92, 0.88, 0.37, 0.71};  // time-active, not relative level
+        s->haveFftView = true;
+        for (std::size_t i = 0; i < kFftViewPoints; ++i) s->fftViewDb[i] = 5.0f + (fftViewHz(i) > 3000.0 && fftViewHz(i) < 3500.0 ? 4.0f : 0.0f);
         s->haveCorrelation = true;
         s->adjacentCorrelation = {0.05, -0.1, 0.08};
         return s;
@@ -190,6 +194,18 @@ private:
 
         expect(page->spectrum().errorLabel.getText().contains("0.2 dB"), page->spectrum().errorLabel.getText());
         expect(page->spectrum().deviationLabel.getText().contains("2.0 dB at"), page->spectrum().deviationLabel.getText());
+        page->spectrum().modeButton(2).onClick();
+        expect(page->spectrum().view.hasFft(), "FFT mode draws the engine's FFT snapshot");
+        page->spectrum().modeButton(1).onClick();
+        expect(!page->spectrum().view.hasFft(), "FFT data only in FFT mode");
+        {
+            auto noFft = std::make_shared<MaskStatistics>(*s);
+            noFft->haveFftView = false;
+            page->applyStats(noFft);
+            page->spectrum().modeButton(2).onClick();
+            expect(!page->spectrum().view.hasFft(), "no FFT data yet");
+            page->applyStats(s);
+        }
         for (int m = 0; m < 3; ++m) {
             page->spectrum().modeButton(m).onClick();
             expect(static_cast<int>(page->spectrum().mode()) == m, "spectrum mode switch");
@@ -208,8 +224,13 @@ private:
         const auto& pct = page->spatial().map.percent();
         expectEquals(static_cast<int>(pct.size()), 4, "four speakers");
         if (pct.size() == 4) {
-            expectWithinAbsoluteError(pct[0], 100.0, 1e-6, "loudest speaker = 100%");
-            expect(pct[2] < pct[0] && pct[2] > 50.0);
+            expectWithinAbsoluteError(pct[0], 92.0, 1e-6, "true time-active fraction, not relative level");
+            expectWithinAbsoluteError(pct[2], 37.0, 1e-6, "quiet-but-level output is rarely active");
+            auto noFrac = std::make_shared<MaskStatistics>(*s);
+            noFrac->outputActiveFraction.clear();
+            page->applyStats(noFrac);
+            expect(page->spatial().map.percent().empty(), "no activity shown before the engine has frames");
+            page->applyStats(s);
         }
         expect(page->spatial().correlationValue.getText().startsWith("Low"), page->spatial().correlationValue.getText());
         auto high = std::make_shared<MaskStatistics>(*s);
@@ -348,6 +369,22 @@ private:
         // Logging.
         page->logLevelBox().setSelectedItemIndex(1, juce::sendNotificationSync);  // Debug
         expectEquals(juce::String(loadPrefs(settings.get()).logLevel), juce::String("debug"));
+        // The chosen level survives a device change in the same session (the controller is re-created).
+        expect(bridge.controller() && bridge.controller()->logger().minLevel() == rt::LogLevel::Debug, "applied to the running logger");
+        bridge.setDevice("Null:Other");
+        expect(bridge.waitIdle(5000));
+        expectEquals(bridge.deviceId(), std::string("Null:Other"));
+        expect(bridge.controller() && bridge.controller()->logger().minLevel() == rt::LogLevel::Debug, "Debug kept after the device change");
+        bridge.setDevice("Null:Test Speakers");
+        expect(bridge.waitIdle(5000));
+        expect(bridge.controller() && bridge.controller()->logger().minLevel() == rt::LogLevel::Debug, "Debug kept after switching back");
+        page->logLevelBox().setSelectedItemIndex(3, juce::sendNotificationSync);  // Warn
+        bridge.setDevice("Null:Other");
+        expect(bridge.waitIdle(5000));
+        expect(bridge.controller() && bridge.controller()->logger().minLevel() == rt::LogLevel::Warn, "Warn kept after the device change");
+        bridge.setDevice("Null:Test Speakers");
+        expect(bridge.waitIdle(5000));
+        page->logLevelBox().setSelectedItemIndex(1, juce::sendNotificationSync);  // back to Debug for the checks below
         page->redactLogsToggle().setToggleState(true, juce::sendNotificationSync);
         page->redactExportsToggle().setToggleState(false, juce::sendNotificationSync);
         expect(loadPrefs(settings.get()).redactLogs && !loadPrefs(settings.get()).redactExports);
@@ -425,6 +462,18 @@ private:
         w->nextButton().onClick();
         expectEquals(w->page(), 1);
         expect(w->titleText().contains("Select Output") && w->deviceBox().getNumItems() >= 1 && w->testButton().isVisible());
+        bridge.stop();
+        expect(pumpUntil([&] { return bridge.status().state == rt::EngineState::Stopped; }, 15000), "engine stopped before the test");
+        // Test: the Test Speakers sequence (CalibrationBus channel-ID bursts), not the masking sound.
+        w->testButton().onClick();
+        expect(w->testing() && w->testButton().getButtonText() == "Stop test", "Test button becomes Stop test");
+        expect(pumpUntil([&] { return bridge.status().out.testRunning; }, 25000), "channel-ID sequence running");
+        expect(bridge.status().out.testOutputs >= 1, "sequence covers the outputs");
+        expect(bridge.controller() && bridge.controller()->testSpeakersState().running, "CalibrationBus test active");
+        w->testButton().onClick();  // STOP
+        expect(!w->testing() && w->testButton().getButtonText() == "Test", "stopped by the second click");
+        expect(pumpUntil([&] { return !bridge.status().out.testRunning; }, 5000), "sequence stopped");
+        expect(pumpUntil([&] { return bridge.status().state == rt::EngineState::Stopped; }, 10000), "engine stopped after the test");
         w->backButton().onClick();
         expectEquals(w->page(), 0);
         w->nextButton().onClick();

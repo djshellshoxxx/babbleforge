@@ -8,6 +8,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "LookAndFeel.h"
+#include "core/engine/MaskEngine.h"
 #include "core/spatial/OutputLayout.h"
 
 namespace bf::gui {
@@ -117,6 +118,49 @@ public:
         for (std::size_t i = 0; i < speakers_.size(); ++i) speakers_[i].activity = i < a.size() ? a[i] : 0.0f;
         repaint();
     }
+    // Virtual talkers (engine MaskStatistics::talkerDots): one dot per active talker at its virtual
+    // position. Stereo: pan between the two speakers; ring / small multichannel: azimuth on the
+    // circle; distributed: next to the home output. Null / no active talker clears the dots.
+    struct Dot {
+        float x = 0.0f, y = 0.0f;  // map coordinates (-1..1)
+        float gain = 0.0f;         // 0..1
+        int slot = 0;
+    };
+    void setTalkers(const MaskStatistics* st) {
+        dots_.clear();
+        if (st && st->spatialAlgorithm >= 0 && !speakers_.empty()) {
+            const auto algo = static_cast<SpatialAlgorithm>(st->spatialAlgorithm);
+            for (std::size_t i = 0; i < st->talkerDots.size(); ++i) {
+                const auto& d = st->talkerDots[i];
+                if (!d.active) continue;
+                Dot o;
+                o.slot = static_cast<int>(i);
+                o.gain = juce::jlimit(0.0f, 1.0f, d.gain);
+                const auto& a = speakers_.front();
+                if (algo == SpatialAlgorithm::DistributedStereo && speakers_.size() >= 2) {
+                    const float u = juce::jlimit(0.0f, 1.0f, (d.pan + 1.0f) * 0.5f);  // -1 = first (left) output
+                    o.x = a.x + (speakers_[1].x - a.x) * u;
+                    o.y = a.y + (speakers_[1].y - a.y) * u;
+                } else if (algo == SpatialAlgorithm::SmallMultichannel) {
+                    const float r = juce::degreesToRadians(d.azimuthDeg);
+                    o.x = -std::sin(r) * 0.72f;
+                    o.y = -std::cos(r) * 0.72f;
+                } else if (algo == SpatialAlgorithm::LargeDistributed && d.home >= 0 && d.home < static_cast<int>(speakers_.size())) {
+                    const auto& h = speakers_[static_cast<std::size_t>(d.home)];
+                    const float jitter = 0.10f * std::sin(static_cast<float>(i) * 2.399f);  // spread several talkers of one home
+                    o.x = h.x * 0.85f + jitter;
+                    o.y = h.y * 0.85f + 0.10f * std::cos(static_cast<float>(i) * 2.399f);
+                } else {
+                    o.x = a.x * 0.6f;
+                    o.y = a.y * 0.6f;
+                }
+                dots_.push_back(o);
+            }
+        }
+        repaint();
+    }
+    int talkerDotCount() const { return static_cast<int>(dots_.size()); }
+    const Dot& talkerDot(int i) const { return dots_[static_cast<std::size_t>(i)]; }
     int speakerCount() const { return static_cast<int>(speakers_.size()); }
     float activityAt(int i) const { return i >= 0 && i < speakerCount() ? speakers_[static_cast<std::size_t>(i)].activity : 0.0f; }
     // "37%" text shown beside speaker i.
@@ -167,11 +211,20 @@ public:
             g.drawText(s.enabled ? percent(s.activity) : juce::String("off"),
                        juce::Rectangle<float>(px - 24, py + rad + 1, 48, 14).toNearestInt(), juce::Justification::centred);
         }
+        for (const Dot& d : dots_) {
+            const float px = c.x + d.x * rx, py = c.y + d.y * ry;
+            const float rad = 3.0f + 3.0f * d.gain;
+            g.setColour(t.warn.withAlpha(0.35f + 0.55f * d.gain));
+            g.fillEllipse(px - rad, py - rad, rad * 2, rad * 2);
+            g.setColour(t.warn);
+            g.drawEllipse(px - rad, py - rad, rad * 2, rad * 2, 1.0f);
+        }
     }
 
 private:
     std::vector<Speaker> speakers_;
     std::vector<float> activity_;
+    std::vector<Dot> dots_;
 };
 
 }  // namespace bf::gui

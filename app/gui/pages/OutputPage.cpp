@@ -1,10 +1,12 @@
 #include "pages/OutputPage.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "LookAndFeel.h"
 #include "model/Catalog.h"
 #include "model/OutputModel.h"
+#include "model/Prefs.h"
 
 namespace bf::gui {
 
@@ -112,6 +114,20 @@ OutputPage::OutputPage(PageContext& c) : Page(c) {
     for (auto* l : {&techCaption_, &devInfoCaption_, &limiterCaption_}) addChildComponent(*l);
     for (const char* n : {"RMS", "LUFS-S", "True Peak", "Limiter"}) addReadout(n, true);
     for (const char* n : {"Driver", "Sample Rate", "Buffer", "Channels", "Latency", "Audio Dropouts"}) addReadout(n, false);
+    for (auto* c : std::initializer_list<juce::ComboBox*>{&rate_, &buffer_}) {
+        noFocus(*c);
+        c->onChange = [this] {
+            if (!silent_) applyFormat();
+        };
+        addChildComponent(*c);
+    }
+    addChildComponent(rateCaption_);
+    addChildComponent(bufferCaption_);
+    rate_.setTooltip("Output sample rate. Masking runs at 44.1, 48, 88.2 and 96 kHz. Changing it restarts the audio briefly.");
+    buffer_.setTooltip("Audio buffer size in samples. Smaller is lower latency, larger is safer against dropouts.");
+    styleLabel(formatNote_, fonts::body(13.0f), t.textDim, juce::Justification::centredLeft);
+    formatNote_.setText("Changing these fades the masking out and restarts the audio engine.", juce::dontSendNotification);
+    addChildComponent(formatNote_);
     limiterOn_.setTooltip("The limiter protects the speakers and ears. Switching it off shows \"Limiter disabled\" in the status bar.");
     noFocus(limiterOn_);
     limiterOn_.onClick = [this] { setLimiterEnabled(state(), limiterOn_.getToggleState()); };
@@ -168,10 +184,61 @@ void OutputPage::fillDevices() {
                             juce::String(d.numOutputs) + " ch)", i + 1);
         if (d.id == cur) sel = i;
     }
+    fillFormatBoxes();
     if (sel >= 0) device_.setSelectedItemIndex(sel, juce::dontSendNotification);
     else device_.setText(cur.empty() ? juce::String("Choose an output device") : juce::String::fromUTF8(cur.c_str()) + " (not available)",
                          juce::dontSendNotification);
     silent_ = false;
+}
+
+void OutputPage::fillFormatBoxes() {
+    // Sample rates the engine supports for babble (TALKER_ENGINE §8.1), limited to what the
+    // device reports; buffer sizes 64..4096 from the device (default list when it reports none).
+    const double curRate = ctx.bridge.requestedSampleRate();
+    const int curBuf = ctx.bridge.requestedBufferFrames();
+    const rt::AudioDeviceInfo* dev = nullptr;
+    const std::string cur = ctx.bridge.deviceId();
+    for (const auto& d : devices_)
+        if (d.id == cur) dev = &d;
+    rateValues_.clear();
+    bufferValues_.clear();
+    for (const double r : {44100.0, 48000.0, 88200.0, 96000.0}) {
+        bool ok = !dev || dev->sampleRates.empty();
+        if (!ok)
+            for (const double x : dev->sampleRates) ok = ok || std::abs(x - r) < 1.0;
+        if (ok || std::abs(r - curRate) < 1.0) rateValues_.push_back(r);
+    }
+    if (rateValues_.empty()) rateValues_ = {44100.0, 48000.0, 88200.0, 96000.0};
+    std::vector<int> bufs = dev && !dev->bufferSizes.empty() ? dev->bufferSizes : std::vector<int>{64, 128, 256, 512, 1024, 2048, 4096};
+    for (const int b : bufs)
+        if (b >= 64 && b <= 4096) bufferValues_.push_back(b);
+    if (std::find(bufferValues_.begin(), bufferValues_.end(), curBuf) == bufferValues_.end()) bufferValues_.push_back(curBuf);
+    std::sort(bufferValues_.begin(), bufferValues_.end());
+    bufferValues_.erase(std::unique(bufferValues_.begin(), bufferValues_.end()), bufferValues_.end());
+    silent_ = true;
+    rate_.clear(juce::dontSendNotification);
+    buffer_.clear(juce::dontSendNotification);
+    for (std::size_t i = 0; i < rateValues_.size(); ++i) {
+        rate_.addItem(juce::String(rateValues_[i] / 1000.0, rateValues_[i] == 44100.0 || rateValues_[i] == 88200.0 ? 1 : 0) + " kHz", static_cast<int>(i) + 1);
+        if (std::abs(rateValues_[i] - curRate) < 1.0) rate_.setSelectedId(static_cast<int>(i) + 1, juce::dontSendNotification);
+    }
+    for (std::size_t i = 0; i < bufferValues_.size(); ++i) {
+        buffer_.addItem(juce::String(bufferValues_[i]) + " samples", static_cast<int>(i) + 1);
+        if (bufferValues_[i] == curBuf) buffer_.setSelectedId(static_cast<int>(i) + 1, juce::dontSendNotification);
+    }
+    silent_ = false;
+}
+
+void OutputPage::applyFormat() {
+    const int ri = rate_.getSelectedId() - 1, bi = buffer_.getSelectedId() - 1;
+    if (ri < 0 || ri >= static_cast<int>(rateValues_.size()) || bi < 0 || bi >= static_cast<int>(bufferValues_.size())) return;
+    const double sr = rateValues_[static_cast<std::size_t>(ri)];
+    const int bf = bufferValues_[static_cast<std::size_t>(bi)];
+    ctx.bridge.setAudioFormat(sr, bf);
+    updatePrefs(ctx.settings, [&](Prefs& p) {
+        p.sampleRate = sr;
+        p.bufferFrames = bf;
+    });
 }
 
 void OutputPage::rebuildMeters() {
@@ -201,7 +268,8 @@ void OutputPage::refreshFromState() {
     master_.setValueSilently(state().strengthDb());
     rebuildMeters();
 
-    for (auto* c : std::initializer_list<juce::Component*>{&techCaption_, &devInfoCaption_, &limiterCaption_, &limiterOn_, &ceiling_, &ceilingLabel_})
+    for (auto* c : std::initializer_list<juce::Component*>{&techCaption_, &devInfoCaption_, &limiterCaption_, &limiterOn_, &ceiling_, &ceilingLabel_,
+                                                          &rateCaption_, &bufferCaption_, &rate_, &buffer_, &formatNote_})
         c->setVisible(adv);
     for (auto& r : readouts_) {
         r.caption->setVisible(adv);
@@ -384,7 +452,15 @@ int OutputPage::layoutPage(int width) {
         grid({"RMS", "LUFS-S", "True Peak", "Limiter"}, 4);
         place(devInfoCaption_, 24, 4);
         grid({"Driver", "Sample Rate", "Buffer", "Channels", "Latency", "Audio Dropouts"}, 3);
-        y += 6;
+        {
+            const int cw = (w - 12) / 2;
+            rateCaption_.setBounds(x, y, cw, 18);
+            bufferCaption_.setBounds(x + cw + 12, y, cw, 18);
+            rate_.setBounds(x, y + 20, cw, 32);
+            buffer_.setBounds(x + cw + 12, y + 20, cw, 32);
+            formatNote_.setBounds(x, y + 56, w, 20);
+            y += 84;
+        }
         place(limiterCaption_, 24, 4);
         limiterOn_.setBounds(x, y, 160, 30);
         y += 34;
@@ -398,6 +474,7 @@ int OutputPage::layoutPage(int width) {
             hide(*r.caption);
             hide(*r.value);
         }
+        for (auto* c : std::initializer_list<juce::Component*>{&rateCaption_, &bufferCaption_, &rate_, &buffer_, &formatNote_}) hide(*c);
         y += 16;
     }
     return y;

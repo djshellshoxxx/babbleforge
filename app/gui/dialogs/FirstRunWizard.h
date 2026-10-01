@@ -29,7 +29,9 @@ public:
     void back();
     void selectDevice(int index);
     void selectArea(const std::string& areaId);
-    void testOutput();
+    void testOutput();  // starts the Test Speakers sequence (CalibrationBus) or stops it
+    void stopTest();
+    bool testing() const noexcept { return testing_; }
     // Applies the choices (area, output device) and optionally starts masking.
     void finish(bool start);
     juce::ComboBox& deviceBox() { return device_; }
@@ -55,7 +57,7 @@ private:
     std::string areaId_, deviceId_;
     int page_ = 0;
     double testEndMs_ = 0.0;
-    bool testing_ = false, finished_ = false;
+    bool testing_ = false, testSeenRunning_ = false, finished_ = false;
 
     juce::Label title_, text_, setup_;
     juce::ComboBox device_;

@@ -80,12 +80,19 @@ public:
     class SpectrumView final : public juce::Component {
     public:
         void set(SpecMode m, const std::array<double, 26>& ref, const std::array<double, 26>& meas, bool haveMeas);
+        // FFT mode: the engine's 1/24-octave smoothed FFT (kFftViewPoints dB values) with the same
+        // overall offset removed as the band curves (offsetDb). Null: no FFT data yet.
+        void setFft(const std::array<float, kFftViewPoints>* fftDb, double offsetDb);
+        bool hasFft() const noexcept { return haveFft_; }
         void paint(juce::Graphics&) override;
 
     private:
         SpecMode mode_ = SpecMode::ThirdOctave;
         std::array<double, 26> ref_{}, meas_{};
         bool haveMeas_ = false;
+        std::array<float, kFftViewPoints> fft_{};
+        double fftOffset_ = 0.0;
+        bool haveFft_ = false;
     };
 
     class SpectrumCard final : public Card {
@@ -147,6 +154,7 @@ public:
 
     class SpeakerMap final : public juce::Component {
     public:
+        // pct: per-speaker time-active percentage (0..100) from MaskStatistics::outputActiveFraction.
         void set(std::vector<double> pct, bool have);
         const std::vector<double>& percent() const noexcept { return pct_; }
         void paint(juce::Graphics&) override;

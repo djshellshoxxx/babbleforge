@@ -100,6 +100,10 @@ public:
     CommandResult reset();
     CommandResult setPreset(const nlohmann::json& presetDoc);  // "setPlan"
     CommandResult setStrength(double db);
+    // Output sample rate / buffer size (GUI OUTPUT > Advanced). Stored in the configuration; while
+    // READY / STARTING / RUNNING / DEGRADED it rebuilds (STOPPING with fade -> PREPARING). Other
+    // states only store the values for the next prepare. InvalidArgument for rate <= 0 / buffer < 16.
+    CommandResult setAudioFormat(double sampleRate, int bufferFrames);
     // TEST SPEAKERS (GUI §23): sequential channel-identification signal over the enabled outputs
     // (CalibrationBus ChannelId), or STOP TEST. IllegalTransition when no engine is prepared.
     CommandResult testSpeakers(bool on);

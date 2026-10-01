@@ -93,6 +93,8 @@ public:
             for (int i = 0; i < 5; ++i)
                 if (prefs.logLevel == levels[i]) o.log.minLevel = static_cast<bf::rt::LogLevel>(i);
             o.log.redactPathsInLogs = prefs.redactLogs;
+            o.sampleRate = prefs.sampleRate;
+            o.bufferFrames = prefs.bufferFrames;
             o.redactPathsInExports = prefs.redactExports;
             // "Restore previous configuration" off: start from the factory configuration (GUI §51).
             if (!prefs.restorePrevious) o.preset = nlohmann::json::parse(bf::serializePreset(AppState::factoryPreset(*data_, "office", "balanced")));

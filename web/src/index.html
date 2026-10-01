@@ -214,6 +214,7 @@
         <p id="corpusAbout"></p>
         <p><b>Differences from the desktop app:</b> output goes to the browser's default stereo device (multichannel layouts are folded to stereo); the engine renders ~0.5 s ahead in a Web Worker, so setting changes are heard after about half a second; there is no device selection, preset library, corpus import, or real-time thread priority.</p>
         <p><a href="./corpus/ATTRIBUTION.md">Speech corpus attribution</a> · <a href="https://github.com/djshellshoxxx/babbleforge">Source code</a></p>
+        <p><b>Donate (Monero / XMR):</b> <code class="xmr">85cSWLFurZj8XbKWX7Kk3u1oUtp5vLGQcLSfXEdGnTUU5P9mik6GCPk8guPfAwzHdFFUCbDKChZEphQyp6BNMQwo5oyPLUD</code></p>
       </div>
     </section>
   </main>
@@ -225,7 +226,20 @@
   <span id="stEngine">Engine: LOADING</span>
   <span id="stLimiter" class="warn hidden">Limiter disabled</span>
   <span class="muted">Runs locally · Digital level only — not SPL</span>
+  <button id="donateBtn" class="donate-btn" type="button">♥ Donate (Monero)</button>
 </footer>
+
+<dialog id="donateDialog" class="donate">
+  <h3>Support BabbleForge</h3>
+  <p>BabbleForge is free. If it is useful to you, donations in Monero (XMR) are appreciated:</p>
+  <code id="xmrAddr" class="xmr">85cSWLFurZj8XbKWX7Kk3u1oUtp5vLGQcLSfXEdGnTUU5P9mik6GCPk8guPfAwzHdFFUCbDKChZEphQyp6BNMQwo5oyPLUD</code>
+  <p id="donateMsg" class="muted" aria-live="polite"></p>
+  <div class="dlg-btns">
+    <a class="btn" href="monero:85cSWLFurZj8XbKWX7Kk3u1oUtp5vLGQcLSfXEdGnTUU5P9mik6GCPk8guPfAwzHdFFUCbDKChZEphQyp6BNMQwo5oyPLUD">Open in wallet</a>
+    <button id="donateCopy" class="btn primary" type="button">Copy address</button>
+    <button id="donateClose" class="btn" type="button">Close</button>
+  </div>
+</dialog>
 
 <dialog id="advDialog">
   <p>Advanced mode exposes detailed audio and masking controls.</p>

@@ -24,6 +24,14 @@ BabbleForge is a desktop speech-masking generator. It produces stationary speech
 | [docs/V2_EXTENSION_POINTS.md](docs/V2_EXTENSION_POINTS.md) | Reserved interfaces and calibration signal bus |
 | [docs/research/](docs/research/) | Research notes and deep-research addendum |
 
+## Support
+
+BabbleForge is free. Donations in Monero (XMR) are appreciated:
+
+```
+85cSWLFurZj8XbKWX7Kk3u1oUtp5vLGQcLSfXEdGnTUU5P9mik6GCPk8guPfAwzHdFFUCbDKChZEphQyp6BNMQwo5oyPLUD
+```
+
 ## Status
 
 Specification phase. No production code yet. Implementation order: `docs/ENGINE.md` §11.

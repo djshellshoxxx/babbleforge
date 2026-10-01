@@ -854,3 +854,16 @@ async function boot() {
   S.ready = true;
 }
 boot();
+
+// Donation dialog (Monero address shown in the footer on every page)
+{
+  const dlg = document.getElementById('donateDialog');
+  const msg = document.getElementById('donateMsg');
+  document.getElementById('donateBtn')?.addEventListener('click', () => { msg.textContent = ''; dlg.showModal(); });
+  document.getElementById('donateClose')?.addEventListener('click', () => dlg.close());
+  document.getElementById('donateCopy')?.addEventListener('click', async () => {
+    const addr = document.getElementById('xmrAddr').textContent.trim();
+    try { await navigator.clipboard.writeText(addr); msg.textContent = 'Address copied.'; }
+    catch { msg.textContent = 'Copy failed — select the address and copy it manually.'; }
+  });
+}

@@ -211,7 +211,8 @@ private:
     std::vector<std::unique_ptr<Job>> jobs_;  // start order
     std::shared_ptr<Generation> gen_;         // current corpus generation (planner thread; jobs hold their own)
     mutable std::mutex adoptMutex_;
-    std::deque<PendingAdoption> adoptQueue_;  // guarded by adoptMutex_
+    // unique_ptr: PendingAdoption is incomplete here (MSVC's deque needs complete element types).
+    std::deque<std::unique_ptr<PendingAdoption>> adoptQueue_;  // guarded by adoptMutex_
     std::string adoptedVersion_;              // guarded by adoptMutex_
     std::map<std::uint64_t, std::set<SpeakerId>> plannedSpeakers_;  // guarded by adoptMutex_
     std::atomic<bool> adoptPending_{false};

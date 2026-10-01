@@ -581,7 +581,7 @@ bool RealtimeEngine::adoptCorpus(std::shared_ptr<const CorpusSnapshot> snap, std
     a.migration = std::move(migration);
     a.retirePrevious = std::move(retirePrevious);
     std::lock_guard<std::mutex> lk(adoptMutex_);
-    adoptQueue_.push_back(std::move(a));
+    adoptQueue_.push_back(std::make_unique<PendingAdoption>(std::move(a)));
     adoptPending_.store(true, std::memory_order_release);
     return true;
 }
@@ -685,7 +685,7 @@ void RealtimeEngine::plannerStep() {
                     adoptPending_.store(false, std::memory_order_release);
                     break;
                 }
-                a = std::move(adoptQueue_.front());
+                a = std::move(*adoptQueue_.front());
                 adoptQueue_.pop_front();
             }
             applyAdoption(std::move(a), nowB);

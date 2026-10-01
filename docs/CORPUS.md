@@ -46,8 +46,9 @@ Per-preset requirement checks are in `RELIABILITY.md` §3.
 | Music/non-speech content | none | — | > 10 % non-speech events detected (VAD speech prob. mid-range + high spectral flatness) → review | [E] |
 | Minimum file duration | ≥ 30 s | 10–30 s | < 10 s | [I] |
 
-Clipping detection:
+Clipping detection (revised during implementation):
 - a sample is counted clipped if |x| ≥ 0.999 FS, or if ≥ 3 consecutive samples are within 0.01 dB of the file's max |x| (captures clipping at non-full-scale levels after gain changes)
+- flat-top rule: consecutive samples equal within 2^-17 (note: low-frequency (<~20 Hz) sines may still false-trigger)
 - clipped runs are merged when separated by < 1 ms
 
 ---
@@ -199,7 +200,9 @@ Classes: Good ≥ 80, Usable 50–79, Rejected < 50 or any hard reject rule (§1
 
 - Usable recordings are included, but their selection weight is × (qualityScore/100).
 - **Commit:** analysis results and cache files are written to a staging DB/directory, then atomically swapped (rename of the DB file plus a manifest version bump).
-- The engine is notified via the control thread. It picks the new version at the next plan build. Running events finish on old cache files, which are kept until no reference remains (reference-counted file handles).
+- The engine is notified via the control thread. It picks the new version at the next plan build. Running events finish on old cache files, which are kept until no reference remains (reference-counted file handles). Previous cache kept as cache.old-<version>, purged next import (revised during implementation).
+- **Effective bandwidth (revised during implementation):** measured on 1/3-oct band levels.
+- **Not yet implemented:** music/non-speech flag, overlap-based anchor exclusion, ECAPA check (revised during implementation).
 
 ### 3.13 Duplicate detection
 
@@ -330,9 +333,17 @@ struct SpeakerRec  { float features[8]; uint32_t firstRecording, nRecordings;
 
 ---
 
-## 7. Licensing and distribution of corpora
+## 7. Build options and SQLite (revised during implementation)
+
+**SQLite:** the corpus database backend. Fetched from sqlite.org as a single-file amalgamation; option `BF_SQLITE_USE_SYSTEM=ON` uses the system library instead. Compilation with `BF_WITH_CORPUS_DB` toggle.
+
+---
+
+## 8. Licensing and distribution of corpora
 
 - BabbleForge ships **no mandatory corpus**.
 - Recommended development/test corpus: MUSAN speech (CC BY 4.0), with attribution kept in `manifest.json`.
 - Common Voice (CC0) may be used through the corpus builder by the user. Its terms ask that datasets not be re-mirrored, so it is not bundled.
 - Every corpus manifest stores the license and source per recording group (`license`, `attribution`, `sourceUrl`). An export of corpus metadata includes them.
+
+---

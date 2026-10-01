@@ -137,6 +137,8 @@ An IIR design would need a fitter and still would not match curve shapes as exac
 
 ### 4.3 Filter design procedure (worker thread)
 
+**Input specification (revised during implementation):** FirDesigner input is a spectral-density-equivalent band-level target (white noise → given band levels). Callers converting per-band gains must add the bandwidth term.
+
 ```text
 Input: target band levels B[k] (26 bands, dB), fs, taps L, lfLimit, hfLimit
 1. N_fft = 4·L (L = 4096 → 16384 at 48 kHz; L scales ×2 at 88.2/96 kHz)
@@ -214,8 +216,9 @@ It must **not** behave like a multiband compressor or dynamic EQ: short-term spe
 | Analysis window 2–10 s | **5 s blocks** feeding a **60 s exponential long-term estimate** | A single 5 s block of a 4–8-talker babble has a 1/3-oct band-level standard deviation of about 1–2 dB at LF (few independent events). Correcting on raw 5 s blocks would chase noise. The 60 s estimate reduces this to about 0.3–0.5 dB [I, statistics] |
 | Integration 30–120 s | **Closed-loop time constant τ_c: Slow 300 s, Normal 120 s, Fast 45 s** | τ_c ≥ 2 × the estimator time constant avoids loop oscillation (the estimator lag acts as a delay). 30 s is too fast relative to the 60 s estimator [I, control theory] |
 | Max correction ±6 dB | **±6 dB absolute clamp; ±4 dB "healthy" range** | Beyond ±4 dB the static EQ or pool is wrong: the engine flags `spectrum.correctionLarge` and recommends "Rebuild Analysis" instead of silently correcting |
-| — | **Slew limit 0.5 dB/min per band** (Fast: 1.0 dB/min) | Guarantees inaudible drift [E] |
+| — | **Slew limit 0.5 dB/min per band** (Fast: 1.0 dB/min; Strict-mode laboratory: 3 dB/min) (revised during implementation) | Guarantees inaudible drift [E] |
 | — | **Deadband ±0.3 dB** | Stops limit cycling from estimator noise [I] |
+| — | **Known limitation: 1-2-1 band smoothing cannot remove single-band errors** (revised during implementation) | Residual up to ~0.9 dB, within acceptance ±2 dB |
 
 ### 6.3 Algorithm (analysis thread, every 5 s block)
 
@@ -287,9 +290,10 @@ inputs: P_meas[b]  (60 s exponential band power of T1 babble; b = 21 bands)
 env[n] = 10 ms-frame power of T3 (100 Hz envelope sample rate), optionally per octave band
 block  = 20 s (2000 samples), Hann, 50 % overlap
 E(f)   = |FFT(env)|, normalized: m(f) = 2|E(f)| / E(0)       (modulation index, as in STI MTF)
-bands  = 1/3-octave modulation bands 0.5 … 16 Hz (15 bands: 0.5, 0.63, 0.8, 1, 1.25, 1.6,
-         2, 2.5, 3.15, 4, 5, 6.3, 8, 10, 12.5, 16), energy-averaged within band
-publish: 60 s average of m(f) per band, broadband and per octave carrier (7 × 15 matrix)
+bands  = 1/3-octave modulation bands 0.5 … 16 Hz (16 bands: 0.5, 0.63, 0.8, 1, 1.25, 1.6,
+         2, 2.5, 3.15, 4, 5, 6.3, 8, 10, 12.5, 16), energy-averaged within band (revised during implementation)
+band value = sqrt(Σm²/ENBW) (revised during implementation)
+publish: 60 s average of m(f) per band, broadband and per octave carrier (7 × 16 matrix)
 ```
 
 **Interpretation:**

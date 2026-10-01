@@ -72,7 +72,7 @@ All talkers sum with gain 1. The stationary component is one noise stream. No de
 ### 3.2 Distributed Stereo
 
 - **Pan law:** constant power. For pan position p ∈ [−1, 1]: θ = (p + 1)·π/4, g_L = cos θ, g_R = sin θ.
-- **Width limit (no hard panning):** |p| ≤ p_max = 0.70 · spread (spread ∈ [0, 1], default 0.6 → p_max 0.42) [E]. At the absolute limit p = 0.70, the far channel is −12.6 dB relative to the near one. Hard left/right never occurs.
+- **Width limit (no hard panning):** |p| ≤ p_max = 0.70 · spread (spread ∈ [0, 1], default 0.6 → p_max 0.42) [E]. At the absolute limit p = 0.70, the far channel is −12.4 dB relative to the near one (exact constant-power value) (revised during implementation). Hard left/right never occurs.
 - **Placement at segment start:** p is drawn uniformly in [−p_max, p_max]. With probability 0.7 [E], the draw is reflected to the side whose babble energy over the last 10 s is lower (energy balancing).
 - **Motion:** within a segment, p follows a slow bounded random walk. The target is re-drawn every 4–8 s (uniform) and approached with a maximum rate of 0.02·motion per second (motion ∈ [0, 1] from Area and Character). This is ≤ 0.02 pan units/s, which is inaudible as motion but avoids static images. No ping-pong: reversals are limited to one per target interval.
 - **Decorrelation:** all-pass cascade per channel (§5) at the selected Speaker Variation level.
@@ -149,9 +149,9 @@ A_i(z) = (−g_i + z^{−D_i}) / (1 − g_i z^{−D_i})
 | Medium (default) | 3 | 0.4–3.0 ms | 0.45–0.60, alternating sign per channel | + talker placement balancing |
 | High | 5 | 0.4–4.5 ms | 0.45–0.60 | + stereo p_max × 1.1 (≤ 0.7), MDAP δ × 1.2, k_n − 1 shared neighbors reduced by one where N allows |
 
-- **Delay selection [I]:** delays in samples are distinct primes, unique per (channel, stage). They are drawn deterministically from stream `decorrelator.ch.<c>` without replacement from the primes in range. They scale with fs (the time values are fixed).
+- **Delay selection [I]:** delays in samples are distinct primes, unique per (channel, stage). They are drawn deterministically from stream `decorrelator.ch.<c>` without replacement from the primes in range. They scale with fs (the time values are fixed). Adjacent channels use disjoint prime-delay sets; IR correlation with previous channel ≤ 0.1 (revised during implementation).
 - **Constraints:**
-  - the energy decay of each cascade must reach −60 dB within 25 ms (checked at design; otherwise g is reduced)
+  - the energy decay of each cascade must reach −60 dB within 25 ms (checked at design; all-pass gains are reduced automatically below 0.45–0.60 where needed to meet this rule; High level ends up |g|≈0.1–0.3 at 48 kHz) (revised during implementation)
   - magnitude response flat by construction
 - **Why this is acceptable for speech:** the impulse response is short (< 25 ms to −60 dB), below the echo threshold and comparable to early reflections in small rooms. Validation must confirm there is no audible "phasiness" (Open Research Question 9).
 

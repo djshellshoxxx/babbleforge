@@ -185,7 +185,7 @@ All strategies drive **one fixed DSP graph**. A `MaskStrategy` is a non-RT polic
 
 ```cpp
 struct MaskRenderPlan {                    // immutable, built on control thread
-    uint64_t        planId;
+    uint64_t        planId;                // excludes the talker seed (revised during implementation)
     TalkerPlanParams talkers;              // pool, min/mean/max, durations, gaps, gain var, fades …
     StationaryParams stationary;           // enabled, spectrum id, seed stream
     SpectrumTarget   target;               // 1/3-oct target (shared by both components)
@@ -221,8 +221,8 @@ Each component (babble bus after trim, stationary bus) is normalized independent
 ### 3.2 Babble level normalization (two-stage)
 
 1. **Per-segment normalization [R/S]** — every corpus segment carries its active speech level (ITU-T P.56 method B) from ingestion. Talker gain g_seg = 10^((L_ref − ASL_seg)/20). Every talker, while speaking, is at the same active level, following Rosen et al.'s practice of RMS-normalizing individual talkers before mixing [R].
-2. **Feed-forward count normalization** — the babble bus is scaled by g_bnorm = 1/√(E[k_speech]), where E[k_speech] = planned mean simultaneous *speaking* talkers (mean active talkers × mean within-segment speech fraction from metadata). Independent talkers add in power, so this puts the expected bus power at L_ref.
-3. **Slow feedback trim g_btrim** — the analysis thread measures babble tap T1 power over a 10 s window. It updates a trim integrator with τ = 30 s, clamped to ±6 dB and slew-limited to 0.5 dB/s. This removes residual bias (for example, segment speech-fraction estimation error). It is **not** an AGC: its time constant exceeds speech modulation (0.5–16 Hz) by more than 2 orders of magnitude, so it cannot flatten the envelope [R: preserving the envelope preserves the temporal structure studied in the literature].
+2. **Feed-forward count normalization** — the babble bus is scaled by g_bnorm = 1/√(E[k_speech]), where E[k_speech] = planned mean simultaneous *speaking* talkers measured from an 1800 s probe run of the planner (includes level-variation and fade losses). Independent talkers add in power, so this puts the expected bus power at L_ref (revised during implementation).
+3. **Slow feedback trim g_btrim** — the analysis thread measures babble tap T1 power over a 10 s window. It updates a trim integrator with τ = 30 s, clamped to ±6 dB and slew-limited to 0.5 dB/s. This removes residual bias (for example, segment speech-fraction estimation error). It is **not** an AGC: its time constant exceeds speech modulation (0.5–16 Hz) by more than 2 orders of magnitude, so it cannot flatten the envelope [R: preserving the envelope preserves the temporal structure studied in the literature]. Slow trim is required (feed-forward alone gave +0.5 dB windows) (revised during implementation).
    - The trim freezes while fewer than 1 talker is planned, during strategy crossfades, and for 10 s after any plan change.
    - At a plan change, the trim resets to the stored per-plan value (0 dB if none).
 
@@ -294,9 +294,10 @@ A transparent, always-present true-peak safety limiter. It is not part of normal
 | Detector | True-peak: 4× polyphase oversampling (48 taps per phase, Kaiser β = 8 half-band design) at 44.1/48 kHz; 2× at 88.2/96 kHz. Detector only: the gain is applied at the base rate | [S] BS.1770 Annex 2 |
 | Lookahead | 5.0 ms (240 samples at 48 kHz) | [I] |
 | Attack | Gain curve reaches the required reduction exactly at the peak using a lookahead minimum-hold (sliding-window min over 5 ms) followed by a 5 ms moving-average smoother (Hann-shaped via cascaded box filters), giving a click-free ramp | [I] |
+| Detector | Adds 24 samples of intrinsic delay; smoother = lookahead − detector delay = 240 − 24 = 216 samples = 4.5 ms (revised during implementation) | [I] |
 | Release | Two-stage program-dependent: fast τ = 80 ms for isolated peaks (GR < 2 dB, duration < 50 ms); slow τ = 600 ms otherwise. Release is from a peak-hold of 10 ms | [I] |
 | Linking | Linked within each zone (identical gain on all channels of a zone) so that the spatial balance in a zone does not shift. Zones are independent | [I] |
-| Latency | 5 ms, applied equally to all channels | [I] |
+| Latency | 5 ms total, applied equally to all channels (revised during implementation) | [I] |
 | Safety clip | Hard clip at ±1.0 after the limiter. Each clipped sample increments `clipEvents` (a diagnostic; must remain 0) | [I] |
 | Bypass | Advanced only. When bypassed, the safety clip remains, and the status bar shows "Limiter disabled" | GUI §40 |
 | CPU | ≤ 0.3 % of one core per channel at 48 kHz (benchmark) | [I] |
@@ -371,7 +372,7 @@ The brief's suggestion is reviewed and adjusted. The first launch must be safe, 
 
 | Project | License | Use in BabbleForge | Production dependency? |
 |---|---|---|---|
-| JUCE | AGPLv3 / commercial | Audio I/O, threading, file I/O, DSP primitives (`dsp::Convolution` not used on RT path, see `SPECTRUM_ENGINE.md` §4.4) | Yes (license choice is a project decision) |
+| JUCE | AGPLv3 / commercial | Audio I/O, threading, file I/O, DSP primitives (`dsp::Convolution` not used on RT path, see `SPECTRUM_ENGINE.md` §4.4). Device layer and GUI. Chosen for implementation (revised during implementation); licence decision pending with the project owner | Yes (license choice is a project decision) |
 | Spatial Audio Framework (SAF) | ISC core; some optional modules GPLv2 | Reference for VBAP/MDAP, lattice all-pass decorrelator design, arbitrary layouts. Core ISC modules may be linked; GPL modules must not be | Optional (ISC modules only) |
 | Pyroomacoustics | MIT | Offline room simulation in the validation toolchain | No |
 | Google speech_intelligibility_index | Apache-2.0 (archived Apr 2026) | SII reference oracle for V2 tests | No |
@@ -488,10 +489,10 @@ All criteria are measurable. "Factory preset" means every Area × Strategy combi
 
 | ID | Criterion | Pass condition |
 |---|---|---|
-| A-SPA-1 | Stationary decorrelation | \|ρ\| < 0.02 between any two channels (10 s windows) |
+| A-SPA-1 | Stationary decorrelation | \|ρ\| over 60 s < 0.02; median of 10 s windows < 0.02; 95th percentile < 0.03 (independent noise has ±0.01 SD per 10 s window) (revised during implementation) |
 | A-SPA-2 | Babble correlation | Adjacent-channel ρ: Medium ≤ 0.30, High ≤ 0.15 (95th percentile of 10 s windows) in small-multichannel and distributed modes |
 | A-SPA-3 | Channel energy balance | Long-term (10 min) per-channel RMS within ±1.0 dB of each other (before user trims) |
-| A-SPA-4 | No hard panning | Stereo: no talker's far-channel gain below −12.6 dB relative to its near channel. Small multichannel: every talker feeds ≥ 2 outputs, with the second-largest gain ≥ −9 dB relative to the largest (`SPATIAL_ENGINE.md` §3) |
+| A-SPA-4 | No hard panning | Stereo: no talker's far-channel gain below −12.4 dB relative to its near channel (revised during implementation). Small multichannel: every talker feeds ≥ 2 outputs, with the second-largest gain ≥ −9 dB relative to the largest (`SPATIAL_ENGINE.md` §3) |
 | A-SPA-5 | Stereo babble correlation | 95th-percentile broadband ρ: Medium ≤ 0.5, High ≤ 0.3 |
 
 ### 12.5 Determinism

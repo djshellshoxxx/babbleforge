@@ -187,7 +187,8 @@ For each new ON period in slot j:
 ### 4.5 Enforcing min / max and avoiding exposure gaps
 
 - **Max:** V = max slots exist, so k_a ≤ max holds by construction.
-- **Min:** when a planned fade-out would make k_a < min at time t, the planner immediately schedules a *forced start* in an idle slot (ignoring that slot's remaining OFF time but not its re-entry cooldown) at t − overlap, with overlap from §4.2. If no slot is out of cooldown, it uses the slot whose cooldown ends soonest, at the moment it ends.
+- **Min:** when a planned fade-out would make k_a < min at time t, the planner immediately schedules a *forced start* in an idle slot (ignoring that slot's remaining OFF time but not its re-entry cooldown) at t − overlap, with overlap from §4.2. If no slot is out of cooldown, it uses the slot whose cooldown ends soonest, at the moment it ends. Forced-start overlap floor is 120 ms (revised during implementation).
+- **End-cluster guard (revised during implementation):** when ≤ V − min ends occur in any cooldown+40 ms window, prevent gap.
 - **Onset pairing (CVR):** when a start would occur while k_s = 0, the planner pulls the next scheduled start of another slot forward to within the CVR window (100–300 ms), where permitted by that slot's cooldown.
 - **Anti-synchrony guard:** no two events may start within 40 ms of each other, and no two may end within 40 ms of each other. A violating event is shifted by +40…+120 ms (uniform draw).
 

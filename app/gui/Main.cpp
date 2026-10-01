@@ -8,6 +8,8 @@
 
 #include "LookAndFeel.h"
 #include "MainComponent.h"
+#include "dialogs/FirstRunWizard.h"
+#include "model/Prefs.h"
 #include "core/corpus/CorpusLoader.h"
 
 #ifndef BF_DEFAULT_DATA_DIR
@@ -76,13 +78,25 @@ public:
 
         juce::String stateDir = argValue(args, "--state-dir");
         const auto appDir = stateDir.isNotEmpty() ? toPath(stateDir) : AppSettings::defaultDirectory();
+        std::error_code fsEc;
+        const bool firstRun = !std::filesystem::exists(appDir / "settings.json", fsEc);  // GUI §60
         settings_ = std::make_unique<AppSettings>(appDir / "settings.json");
+        const Prefs prefs = loadPrefs(settings_->get());
         juce::Desktop::getInstance().setGlobalScaleFactor(static_cast<float>(settings_->get().uiScale));
 
         EngineBridge::Options o;
         o.dataSet = data_.get();
         o.deviceId = settings_->get().deviceId;
         o.stateDir = appDir;
+        {
+            static const char* const levels[] = {"trace", "debug", "info", "warn", "error"};
+            for (int i = 0; i < 5; ++i)
+                if (prefs.logLevel == levels[i]) o.log.minLevel = static_cast<bf::rt::LogLevel>(i);
+            o.log.redactPathsInLogs = prefs.redactLogs;
+            o.redactPathsInExports = prefs.redactExports;
+            // "Restore previous configuration" off: start from the factory configuration (GUI §51).
+            if (!prefs.restorePrevious) o.preset = nlohmann::json::parse(bf::serializePreset(AppState::factoryPreset(*data_, "office", "balanced")));
+        }
         juce::String corpusRoot = argValue(args, "--corpus");
         if (corpusRoot.isEmpty()) corpusRoot = juce::String::fromUTF8(settings_->get().corpusRoot.c_str());
         if (corpusRoot.isNotEmpty()) {
@@ -98,7 +112,15 @@ public:
         state_ = std::make_unique<AppState>(*data_, *settings_, undo_, bridge_->startupPreset());
         bridge_->attach(*state_);
         session_ = std::make_unique<PresetSession>(*state_, appDir / "user_presets");
-        window_ = std::make_unique<MainWindow>(new MainComponent(*state_, *session_, *bridge_, *settings_));
+        auto* main = new MainComponent(*state_, *session_, *bridge_, *settings_);
+        window_ = std::make_unique<MainWindow>(main);
+        if (firstRun) {
+            main->showDialog(makeFirstRunDialog(*state_, *settings_, *bridge_));
+        } else {
+            if (prefs.startMinimized || args.contains("--minimized")) window_->setMinimised(true);
+            // Automatic start needs a remembered output device (GUI §51).
+            if (prefs.autoStart && prefs.rememberDevice && !settings_->get().deviceId.empty()) bridge_->start();
+        }
     }
 
     void shutdown() override {

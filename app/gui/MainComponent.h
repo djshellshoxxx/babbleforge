@@ -10,6 +10,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "StatusBar.h"
+#include "dialogs/SafetyBanner.h"
 #include "Widgets.h"
 #include "pages/Page.h"
 
@@ -31,6 +32,9 @@ public:
     bool handleKey(const juce::KeyPress& k);
 
     void openSaveDialog();
+    // Shows an in-window dialog (replacing any open one).
+    void showDialog(std::unique_ptr<OverlayDialog> d);
+    SafetyBanner& safetyBanner() { return safety_; }
     void openChangesDialog();
     void openHelp();
     OverlayDialog* dialog() noexcept { return dialog_.get(); }
@@ -64,7 +68,6 @@ private:
     void rebuildSidebar();
     void updateHeader();
     void sizePage();
-    void showDialog(std::unique_ptr<OverlayDialog> d);
 
     AppState& state_;
     PresetSession& session_;
@@ -83,6 +86,7 @@ private:
     std::map<std::string, std::unique_ptr<Page>> pages_;
     std::string current_;
     StatusBar status_;
+    SafetyBanner safety_;
     std::unique_ptr<OverlayDialog> dialog_;
     juce::TooltipWindow tooltips_{this, 600};
     ShortcutListener shortcuts_{*this};

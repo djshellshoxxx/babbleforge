@@ -17,7 +17,8 @@ MainComponent::MainComponent(AppState& state, PresetSession& session, EngineBrid
       bridge_(bridge),
       settings_(settings),
       ctx_{state, session, bridge, settings, nullptr},
-      status_(bridge, state) {
+      status_(bridge, state),
+      safety_(state, session) {
     const auto& t = Theme::get();
     ctx_.showPage = [this](const std::string& id) { showPage(id); };
     setWantsKeyboardFocus(true);
@@ -56,6 +57,9 @@ MainComponent::MainComponent(AppState& state, PresetSession& session, EngineBrid
     viewport_.setScrollBarThickness(10);
     addAndMakeVisible(viewport_);
     addAndMakeVisible(status_);
+    addChildComponent(safety_);
+    safety_.onReview = [this] { openChangesDialog(); };
+    safety_.onVisibilityChanged = [this] { resized(); };
 
     state_.addListener(this);
     rebuildSidebar();
@@ -422,6 +426,7 @@ void MainComponent::resized() {
         bar.removeFromRight(10);
     }
     presetLabel_.setBounds(bar);
+    safety_.setBounds(r.removeFromTop(safety_.preferredHeight()));  // preset safety prompt (GUI §48), non-blocking
     viewport_.setBounds(r);
     sizePage();
     if (dialog_) dialog_->setBounds(getLocalBounds());

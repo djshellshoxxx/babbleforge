@@ -227,6 +227,7 @@ bool MaskEngine::prepare(double fs, const OutputLayout& layout, int maxBlock, st
     sumT2_.assign(N, 0.0);
     sumT3_.assign(N, 0.0);
     sumT4_.assign(N, 0.0);
+    xyT4_.assign(N > 1 ? N - 1 : 0, 0.0);
     babbleInMix_ = 0.0;
     grActiveSamples_ = 0;
 
@@ -864,6 +865,28 @@ MaskStatistics MaskEngine::statistics() const {
         shapeDevs(stationaryAnalyzer_.overallPower(), referenceDb_, s.stationaryThirdOctMaxDevDb,
                   s.stationaryOctaveMaxDevDb);
     }
+    if (haveReference_) {
+        if (babble_ && babbleAnalyzer_.hasLongTerm()) {
+            s.haveSpectrumView = true;
+            s.measuredDb = powerToDb(babbleAnalyzer_.longTermPower());
+        } else if (stationaryAnalyzer_.numHops() > 0) {
+            s.haveSpectrumView = true;
+            s.measuredDb = powerToDb(stationaryAnalyzer_.overallPower());
+        }
+        s.referenceDb = referenceDb_;
+    }
+    s.occupancy60s = ms.occupancy60s;
+    s.temporalDensity = ms.density;
+    s.gapMean60s = ms.gaps.count ? ms.gaps.medianSec : 0.0;
+    s.gapMax60s = ms.gaps.maxSec;
+    s.slotActive = slotPlaced_;
+    if (cfg_.realtime && N > 1 && pos > 0) {
+        s.haveCorrelation = true;
+        for (std::size_t c = 0; c + 1 < N && c < xyT4_.size(); ++c) {
+            const double d = std::sqrt(std::max(sumT4_[c] * sumT4_[c + 1], 1e-30));
+            s.adjacentCorrelation.push_back(std::clamp(xyT4_[c] / d, -1.0, 1.0));
+        }
+    }
     s.correctionDb = correction_.correction();
     s.babbleKernelDesigns = babbleDesigns_;
     s.eqClamped = eqClamped_;
@@ -1083,6 +1106,11 @@ void MaskEngine::rtAnalyzeTap(int tap, std::int64_t start, const float* const* c
     }
     case 3: {  // T4: output level and meters
         for (std::size_t c = 0; c < N; ++c) sumT4_[c] += sq(ch[c], static_cast<std::size_t>(n));
+        for (std::size_t c = 0; c + 1 < N && c < xyT4_.size(); ++c) {
+            double xy = 0.0;
+            for (int i = 0; i < n; ++i) xy += static_cast<double>(ch[c][i]) * ch[c + 1][i];
+            xyT4_[c] += xy;
+        }
         meters_.process(ch, n);
         anaSamples_ += n;
         break;

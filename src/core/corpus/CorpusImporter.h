@@ -1,6 +1,7 @@
 #pragma once
 // Corpus import job: scan -> analyse (thread pool) -> duplicate detection -> speaker
 // aggregation + LTASS PCA -> staging DB/cache -> atomic commit (docs/CORPUS.md §3.12, §3.13, §4).
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -17,6 +18,7 @@ struct ImportOptions {
     bool storeSourcePaths = true;     // recording.source_path + source_links.json
     ingest::AnalyzerConfig analyzer;
     std::function<void(std::size_t done, std::size_t total, const std::string& file)> progress;
+    const std::atomic<bool>* cancel = nullptr;  // set from another thread: stops with error "cancelled" (nothing is installed)
 };
 
 struct ImportFileReport {

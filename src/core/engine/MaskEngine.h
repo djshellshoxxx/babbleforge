@@ -203,6 +203,16 @@ struct MaskStatistics {
     std::uint64_t underflows = 0, droppedEvents = 0;
     bool sourceErrors = false;
     bool babbleUnavailable = false;  // a plan needed babble but no corpus / unsupported fs
+
+    // Read-only analysis view for the ANALYSIS page (GUI.md section 41-45).
+    bool haveSpectrumView = false;
+    ThirdOctArray referenceDb{}, measuredDb{};  // 26 x 1/3 octave (50 Hz..16 kHz): target and measured (dB)
+    double occupancy60s = 0.0;                  // fraction of 10 ms frames with >= 1 talker (60 s)
+    TemporalDensity temporalDensity = TemporalDensity::Medium;
+    double gapMean60s = 0.0, gapMax60s = 0.0;   // seconds, last 60 s
+    std::vector<std::uint8_t> slotActive;       // per voice slot: carries a talker now
+    bool haveCorrelation = false;
+    std::vector<double> adjacentCorrelation;    // whole-run Pearson of output channels c, c+1
 };
 
 nlohmann::json toJson(const MaskStatistics& s);
@@ -368,6 +378,7 @@ private:
 
     // whole-run accumulators
     std::vector<double> sumT1_, sumT2_, sumT3_, sumT4_;
+    std::vector<double> xyT4_;  // sum x_c * x_{c+1} on T4 (adjacent-channel correlation)
     double babbleInMix_ = 0.0;
     double configuredB_ = 0.0;
     std::uint64_t grActiveSamples_ = 0;

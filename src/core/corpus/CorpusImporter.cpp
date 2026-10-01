@@ -182,6 +182,7 @@ ImportResult importCorpus(const ImportOptions& opt) {
         for (;;) {
             const std::size_t i = next.fetch_add(1);
             if (i >= nFiles) return;
+            if (opt.cancel && opt.cancel->load()) return;
             RecordingAnalysis a = analyzeFile(files[i].second.string(), opt.analyzer);
             a.sourcePath = files[i].second.string();
             if (!a.decodeFailed) {
@@ -221,6 +222,10 @@ ImportResult importCorpus(const ImportOptions& opt) {
         for (unsigned t = 1; t < nt; ++t) pool.emplace_back(worker);
         worker();
         for (auto& t : pool) t.join();
+    }
+    if (opt.cancel && opt.cancel->load()) {
+        fs::remove_all(staging, ec);
+        return fail("cancelled");
     }
     if (!writeErr.empty()) return fail(writeErr);
 

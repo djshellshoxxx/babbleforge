@@ -18,6 +18,14 @@ target_sources(BabbleForge PRIVATE
   pages/AreaPage.cpp pages/AreaPage.h pages/AreaOutputWidgets.h
   pages/OutputPage.cpp pages/OutputPage.h
   pages/PlaceholderPages.cpp
+  model/Prefs.cpp model/Prefs.h
+  pages/AnalysisPage.cpp pages/AnalysisPage.h
+  pages/SettingsPage.cpp pages/SettingsPage.h
+  dialogs/HelpParts.cpp dialogs/HelpParts.h
+  dialogs/LibraryDialogs.cpp dialogs/LibraryDialogs.h
+  dialogs/FirstRunWizard.cpp dialogs/FirstRunWizard.h
+  dialogs/SafetyBanner.cpp dialogs/SafetyBanner.h
+  tests/UiTestsAnalysis.cpp
   tests/UiTests.cpp
   tests/AreaOutputTests.cpp)
 target_include_directories(BabbleForge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

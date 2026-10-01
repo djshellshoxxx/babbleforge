@@ -90,6 +90,9 @@ void EngineBridge::createController(const std::string& deviceId) {
     cfg.backend = backend_;
     cfg.deviceId = deviceId;
     cfg.stateDir = opt_.stateDir;
+    cfg.log = opt_.log;
+    if (cfg.log.dir.empty() && !opt_.stateDir.empty()) cfg.log.dir = opt_.stateDir / "logs";
+    cfg.redactPathsInExports = opt_.redactPathsInExports;
     {
         std::lock_guard<std::mutex> lk(snapMutex_);
         if (lastPushed_) cfg.preset = toJson(*lastPushed_);
@@ -395,6 +398,7 @@ void EngineBridge::sample() {
                 s.out.limiterAbove05 = st.limiterAbove05Fraction;
                 if (st.fs > 0.0) s.out.latencyMs = 1000.0 * (st.latencySamples + s.bufferFrames) / st.fs;
                 s.haveStats = true;
+                s.stats = std::make_shared<const MaskStatistics>(st);
                 if (st.babbleActive) s.voicesActive = st.meanActive;
                 s.outputLevelDb = st.lufsS > -150.0 ? st.lufsS : st.outputRmsDb;
             }

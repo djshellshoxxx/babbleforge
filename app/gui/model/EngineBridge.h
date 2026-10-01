@@ -57,6 +57,8 @@ struct EngineStatus {
     // Plan pushes.
     std::uint64_t pushes = 0;
     std::string lastPushError;
+    // Latest engine statistics (ANALYSIS page); null until masking has produced some.
+    std::shared_ptr<const MaskStatistics> stats;
     // OUTPUT page telemetry (ENGINE §5 meters on the output, TEST SPEAKERS state).
     struct OutputTelemetry {
         std::vector<double> rmsFastDb, truePeakDb;  // per output channel, dBFS / dBTP
@@ -82,6 +84,8 @@ public:
         int debounceMs = 150;
         int uiHz = 30;
         int statusPollMs = 50;
+        rt::LoggerConfig log;                  // log level / redaction (Settings); dir empty: <stateDir>/logs
+        bool redactPathsInExports = true;
     };
 
     class Listener {

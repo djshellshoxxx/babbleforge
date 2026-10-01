@@ -14,7 +14,9 @@ The GUI behavior is specified in `docs/GUI.md`. This note covers how the JUCE ap
 | View | `MainComponent` | `MainComponent.*` | Header (SIMPLE \| ADVANCED, gear), preset bar (state, ADVANCED SETTINGS MODIFIED, Reset, Save As), sidebar built from the registry, a scrolling page viewport, the status bar, keyboard shortcuts (§62) and in-window dialogs (§25, §47, §57, F1 help). |
 | View | `Page`, `PageRegistry` | `pages/Page.*` | Page base class and self-registration. |
 | View | `RunPage`, `MaskPage` | `pages/*` | GUI §3–§13 and §26–§32. |
-| View | placeholders | `pages/PlaceholderPages.cpp` | AREA, OUTPUT, ANALYSIS (Advanced only) and Settings (gear). Each shows a TODO label. |
+| View | `AnalysisPage` | `pages/AnalysisPage.*` | GUI §41-§45, Advanced only. Four cards fed by `EngineStatus::stats` (a `MaskStatistics` snapshot, which also carries the analysis view: target/measured 1/3-octave spectra, occupancy, density, per-slot activity, adjacent-channel correlation). Updates are limited to 15 Hz. |
+| View | `SettingsPage` | `pages/SettingsPage.*` | GUI §50-§53 (gear). Preferences live in `settings.json` under `prefs` (`model/Prefs.*`). The fallback policy is a preset field. |
+| View | dialogs | `dialogs/*` | `LibraryDialogs` (Manage Library, import wizard on a background `CorpusImportJob` with cancel; imports into a staging folder and installs on Add), `FirstRunWizard` (§60, shown when `settings.json` is absent), `SafetyBanner` (§48, non-blocking), `HelpParts` (`?` buttons, cards). |
 | View | `StatusBar` | `StatusBar.*` | §61: a Simple and an Advanced variant, plus "Limiter disabled" (§40). |
 | View | `BfLookAndFeel`, `Theme` | `LookAndFeel.*` | Dark, high-contrast theme. Component properties `bf.primary`, `bf.segment` and `bf.card` give the emphasis of §63. Scaling uses `Desktop::setGlobalScaleFactor(settings.uiScale)`. |
 | View | widgets | `Widgets.*` | `MacroSlider` (caption, end labels, value text, ticks, drag = gesture), `ParamRow`, `ChoiceGroup`, `CollapsiblePanel`, `VStack`, `ActivityBar`, `SpectrumGraph`, `OverlayDialog`. |

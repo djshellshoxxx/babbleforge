@@ -177,6 +177,7 @@ bool MaskEngine::prepare(double fs, const OutputLayout& layout, int maxBlock, st
 
     stationary_.prepare(fs, N, cfg_.seed, kStationaryMaxTaps, static_cast<float>(cfg_.lRefDbfs));
     mixer_.prepare(fs, zoneOf_, 0.0);
+    sourceStage_.prepare(fs, static_cast<int>(N), kCell);
     matrix_.prepare(fs, kCell, zoneOf_, device, nCh_);
     for (std::size_t c = 0; c < N && c < cfg_.channels.size(); ++c) {
         const OutputChannel& oc = cfg_.channels[c];
@@ -754,6 +755,8 @@ void MaskEngine::processCell(float* const* out, int offset, int n) {
         const float g = static_cast<float>(masterCur_ * staticGain_);
         for (std::size_t c = 0; c < N; ++c) pMix_[c][i] *= g;
     }
+    // 5b. Source select: MASKER | CALIBRATION | MUTE (identity while MASKER, bit-identical).
+    sourceStage_.process(pMix_.data(), n);
     // 6. Output matrix.
     matrix_.process(pMix_.data(), pDev_.data(), n);
     // 7. Limiter + safety clip.

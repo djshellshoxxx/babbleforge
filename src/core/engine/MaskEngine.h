@@ -66,6 +66,7 @@
 #include "core/dsp/Limiter.h"
 #include "core/dsp/PartitionedConvolver.h"
 #include "core/engine/BabbleEngine.h"
+#include "core/engine/CalibrationBus.h"
 #include "core/engine/HybridMixer.h"
 #include "core/engine/OutputMatrix.h"
 #include "core/engine/StationaryMaskEngine.h"
@@ -226,6 +227,8 @@ public:
     void process(float* const* out, int nFrames);
 
     void setTapSink(ITapSink* sink) noexcept { tapSink_ = sink; }
+    // Output-source selector + calibration bus (V2_EXTENSION_POINTS §3): after master gain, before the matrix.
+    OutputSourceStage& sourceStage() noexcept { return sourceStage_; }
 
     MaskStatistics statistics() const;
     std::int64_t position() const noexcept { return pos_; }
@@ -330,6 +333,7 @@ private:
     HybridMixer mixer_;
     double masterCur_ = 1.0, masterTarget_ = 1.0, masterCoef_ = 0.0, staticGain_ = 1.0;
     OutputMatrix matrix_;
+    OutputSourceStage sourceStage_;
     Limiter limiter_;
     bool limiterEnabled_ = true;
     std::int64_t crossfadeUntil_ = 0;

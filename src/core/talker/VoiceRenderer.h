@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "core/talker/SourcePreparer.h"
@@ -86,13 +87,24 @@ public:
     // Producer: finished chains the producer may recycle (SPSC, RT -> producer).
     bool popFinished(BlockChain*& chain) noexcept;
 
-    // Control: feed-forward count normalisation, ramped linearly over 2 s from the first
-    // 256-grid boundary >= effectiveSample. immediate = no ramp (plan start).
+    // Control: bus-wide gain, ramped linearly over 2 s from the first 256-grid boundary
+    // >= effectiveSample. immediate = no ramp. (The babble engine applies count normalisation
+    // per epoch with setEpochCountNorm(); this bus gain then stays at 1.)
     void setCountNorm(double gLin, std::int64_t effectiveSample, bool immediate = false) noexcept;
+    // Control: per-epoch count normalisation. Voices of plan epoch `epoch` (and of later epochs
+    // until another value is registered) are scaled by gLin for their whole life, on top of the
+    // bus gain. At a plan change the talkers of the old epoch keep the normalisation of the
+    // plan that scheduled them while the new talkers start at the new one, so the hand-over
+    // (old talkers finishing, new ones entering) stays at the bus level. A bus-wide ramp would
+    // instead apply the new plan's gain to the old plan's talkers (MASK_STRATEGIES §7 step 3).
+    void setEpochCountNorm(double gLin, std::uint32_t epoch) noexcept;
     // Control: slow trim (dB) applied from the first grid boundary >= effectiveSample.
     void setTrimDb(double db, std::int64_t effectiveSample) noexcept;
     // Control: drop events of epochs < minEpoch that start at or after freezeSample.
     void dropStale(std::uint32_t minEpoch, std::int64_t freezeSample) noexcept;
+    // Control: plan change hand-over (TalkerPlanner::lastHandover()): dropStale(h.epoch, h.freeze)
+    // and every older-epoch voice, playing or still queued, is cut exactly as the planner cut it.
+    void beginHandover(const TalkerHandover& h) noexcept;
     // Per-slot channel gains (placeholder spatial API). n <= numChannels.
     void setGains(std::uint32_t slot, const float* gains, std::size_t n) noexcept;
     void clearGains(std::uint32_t slot) noexcept;
@@ -119,6 +131,7 @@ private:
         VoiceEvent e;
         bool used = false;
         double gain = 0.0, gainTarget = 0.0;
+        double epochGain = 1.0;        // per-epoch count normalisation of this voice
         std::array<float, kMaxChannels> chGain{}, chTarget{};
         std::uint32_t speechIdx = 0;
         std::uint32_t gainVer = 0;
@@ -147,8 +160,14 @@ private:
             return true;
         }
     };
-    enum class CmdType : std::uint8_t { CountNorm, CountNormNow, Trim, Drop };
-    struct Cmd { CmdType type = CmdType::CountNorm; double value = 0.0; std::int64_t effective = 0; std::uint32_t epoch = 0; };
+    enum class CmdType : std::uint8_t { CountNorm, CountNormNow, CountNormEpoch, Trim, Drop };
+    struct Cmd {
+        CmdType type = CmdType::CountNorm;
+        double value = 0.0;
+        std::int64_t effective = 0;
+        std::uint32_t epoch = 0;
+        TalkerHandover handover{};  // Drop: span > 0 = hand-over cut
+    };
 
     void drain() noexcept;
     void pollCommands() noexcept;
@@ -156,6 +175,7 @@ private:
     void publishOccupancy(std::int64_t sample) noexcept;
     void renderSub(float* const* out, std::size_t offset, std::size_t n) noexcept;
     void computeTargets(Voice& v) noexcept;
+    double epochGainFor(std::uint32_t epoch) const noexcept;
     void freeVoice(std::size_t i) noexcept;
     static bool speechAt(Voice& v, std::int64_t rel) noexcept;
     // Real-time mode: readiness / postponement / fast fade. False: skip the voice this sub-block.
@@ -181,10 +201,19 @@ private:
     std::unique_ptr<std::array<std::atomic<std::uint32_t>, kMaxSlots>> slotGainVer_;  // 0 = none
     std::uint32_t minEpoch_ = 0;
     std::int64_t freeze_ = 0;
+    // Hand-overs applied so far (newest last; ring of the latest 8), re-applied in order to
+    // older-epoch events drained later so they match the planner's cumulative cuts.
+    std::array<TalkerHandover, 8> handovers_{};
+    std::size_t numHandovers_ = 0, handoverHead_ = 0;
+    void applyHandovers(TalkerEvent& ev) const noexcept;
     // Pending (stamped) gain commands, applied at grid boundaries in arrival order.
     std::array<Cmd, 16> pending_{};
     std::size_t numPending_ = 0;
     double gbCur_ = 1.0, gbStart_ = 1.0, gbTarget_ = 1.0;
+    // Per-epoch count normalisation (registered epochs, newest last; ring of the latest 8).
+    static constexpr std::size_t kEpochGains = 8;
+    std::array<std::pair<std::uint32_t, double>, kEpochGains> epochGains_{};
+    std::size_t numEpochGains_ = 0, epochGainHead_ = 0;
     std::int64_t gbRampPos_ = 0, gbRampLen_ = 96000;
     double trimCur_ = 1.0, trimTarget_ = 1.0;
     double coefGain_ = 0.0, coefCh_ = 0.0;

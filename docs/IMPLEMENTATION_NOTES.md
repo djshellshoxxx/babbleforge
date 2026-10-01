@@ -124,6 +124,18 @@ Independent noise has ±0.01 SD per 10 s window.
 
 ---
 
+## 12. MASK_STRATEGIES.md §7 / TALKER_ENGINE.md §4.6: talker hand-over at a plan change
+
+**File/Area:** `MASK_STRATEGIES.md` §7 step 3, `TALKER_ENGINE.md` §4.6, `ENGINE.md` §3.2 (count normalization)
+
+**Revised specification:** count normalization is per plan epoch, and the old plan's talkers hand over to the new plan's stationary state within 1.5 s.
+- g_bnorm is applied per voice from the epoch that planned it (no bus-wide 2 s ramp). The ramp applied the new plan's gain to the old plan's talkers, which kept playing whole segments (median ≈ 5 s): a dense → natural switch (8.5 → 5.1 mean active, g_bnorm +2.5 dB) overshot by ≈ +1.2 dB at 1 s after the switch (16-seed mean of the babble bus) and single 50 ms windows by > 2 dB (A-LV-4).
+- Kept talkers of older epochs (started before now + 0.5 s) end with their own fade-out at a deterministic per-event point uniform over [freeze + fade-out, freeze + 1.5 s]; the planner and the renderer (events already handed to it, or queued) apply the same cut (`TalkerHandover`).
+- The new plan's slots start from its stationary state: on with probability m / V (fixed modes: always). An on slot takes over at its old talker's fade-out, or fades in at a uniform point of the span; its first talker enters mid-segment (uniform point of a length-biased segment), so the entering talkers are neither all at a phrase onset (+0.7 dB) nor all ending one segment length later. Off slots wait a stationary residual off time from the end of the span; the old talker in a slot does not start a re-entry cooldown. The count controller's 60 s window restarts after the hand-over.
+- Result (dense → natural, 16 seeds, babble bus, 1 s bins): within ±0.5 dB of the pre-switch level through the hand-over (bus ramp: +1.2 / −0.6 dB; per-epoch gain alone: −1.5 dB at 3 s).
+
+---
+
 ## Universal LTASS target (SPECTRUM_ENGINE.md §2.2, ENGINE.md Open Question 18)
 
 `targets/ltass_universal_byrne1994.json` now holds the ANSI S3.5-1997 Table 3 standard speech spectrum (normal effort, 160 Hz–8 kHz; via google/speech_intelligibility_index) converted to 1/3-octave band levels and normalised to the 1 kHz band. The Byrne et al. 1994 table could not be verified from two independent sources. 100/125 Hz and 10 kHz are extrapolated. The id `ltass_universal` and file name are unchanged.

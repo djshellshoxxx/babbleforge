@@ -233,8 +233,18 @@ TEST_CASE("Planner: epoch re-plan keeps frozen events", "[planner]") {
             const auto& k = pl.events()[kept].ev;
             CHECK(k.eventId == pe.ev.eventId);
             CHECK(k.startSample == pe.ev.startSample);
-            CHECK(k.endSample == pe.ev.endSample);
             CHECK(k.epoch == 0);
+            // Hand-over (MASK_STRATEGIES §7): kept talkers finish with their own fade-out by
+            // freeze + 1.5 s; those ending earlier are unchanged.
+            const auto& h = pl.lastHandover();
+            const std::int64_t handoverEnd = now + pl.freezeSamples() + h.span;
+            CHECK(h.epoch == 1);
+            CHECK(h.span == static_cast<std::int64_t>(TalkerPlanner::kHandoverS * kFs));
+            CHECK(k.endSample <= pe.ev.endSample);
+            CHECK(k.endSample <= std::max(handoverEnd, pe.ev.startSample + pe.ev.fadeInLen + (pe.ev.endSample - pe.ev.fadeOutStart)));
+            CHECK(k.endSample - k.fadeOutStart == pe.ev.endSample - pe.ev.fadeOutStart);
+            if (pe.ev.endSample <= now + pl.freezeSamples()) CHECK(k.endSample == pe.ev.endSample);
+            if (k.endSample < pe.ev.endSample) CHECK(k.fadeOutStart >= now + pl.freezeSamples());
             ++kept;
         } else {
             CHECK(std::find(discarded.begin(), discarded.end(), pe.ev.eventId) != discarded.end());

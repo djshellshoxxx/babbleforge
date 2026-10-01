@@ -170,6 +170,51 @@ TEST_CASE("VoiceRenderer: stale-epoch events are dropped; per-slot gains", "[voi
     CHECK(finished == 1);  // b's chain returned immediately
 }
 
+TEST_CASE("VoiceRenderer: plan hand-over cuts old-epoch voices like the planner; per-epoch count norm", "[voice]") {
+    // Old-epoch voice (playing, and one queued after the command) and a new-epoch voice: the
+    // old ones keep the old epoch's count normalisation and end at the planner's cut point.
+    TalkerHandover h;
+    h.epoch = 1;
+    h.freeze = 24000;
+    h.span = 72000;
+    h.salt = 0x1234;
+    TalkerEvent a = mkEvent(0, 0, 0, 10, 190000, 190500, 1.0f);
+    TalkerEvent q = mkEvent(1, 1, 20000, 10, 190000, 190500, 1.0f);
+    TalkerEvent n = mkEvent(2, 2, 30000, 10, 190000, 190500, 1.0f);
+    n.epoch = 1;
+    TalkerEvent ca = a, cq = q;
+    REQUIRE(h.apply(ca));
+    REQUIRE(h.apply(cq));
+    CHECK_FALSE(h.apply(n));  // not older than the hand-over epoch
+    for (const TalkerEvent& c : {ca, cq}) {
+        CHECK(c.endSample - c.fadeOutStart == 500);
+        CHECK(c.fadeOutStart >= h.freeze);
+        CHECK(c.endSample <= h.freeze + h.span);
+    }
+    const auto run = [&](bool split) {
+        Rig rig(1);
+        rig.r.setEpochCountNorm(0.5, 0);
+        rig.add(a, [](std::size_t) { return 1.0f; });
+        const std::vector<std::size_t> blocks = split ? std::vector<std::size_t>{97, 4096, 1} : std::vector<std::size_t>{512};
+        auto y0 = rig.render(1, 5000, blocks)[0];  // a is playing when the hand-over arrives
+        rig.r.beginHandover(h);
+        rig.r.setEpochCountNorm(0.25, 1);
+        rig.add(q, [](std::size_t) { return 1.0f; });  // queued after the command: cut on arrival
+        rig.add(n, [](std::size_t) { return 1.0f; });
+        const auto y1 = rig.render(1, 195000, blocks)[0];
+        y0.insert(y0.end(), y1.begin(), y1.end());
+        return y0;
+    };
+    const auto y = run(false);
+    CHECK(run(true) == y);
+    // Before the old voices end: 0.5 (a) + 0.5 (q, after its start) + 0.25 (n).
+    CHECK(std::fabs(y[10000] - 0.5f) < 1e-4f);
+    CHECK(std::fabs(y[std::min(ca.fadeOutStart, cq.fadeOutStart) - 1] - 1.25f) < 1e-3f);
+    // After both cut points only the new-epoch voice remains, at its own normalisation.
+    CHECK(std::fabs(y[std::max(ca.endSample, cq.endSample) + 10] - 0.25f) < 1e-4f);
+    CHECK(std::fabs(y[150000] - 0.25f) < 1e-4f);
+}
+
 TEST_CASE("BlockChain: single-writer/single-reader semantics and block recycling", "[voice]") {
     BlockPool pool(4);
     BlockChain ch;

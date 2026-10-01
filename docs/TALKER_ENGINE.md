@@ -204,7 +204,8 @@ For each new ON period in slot j:
 On a plan change:
 1. The planner discards unstarted events beyond the freeze window and returns their preload blocks.
 2. It resets its RNG streams to a deterministic state derived from (seed, epoch, plan hash).
-3. It continues planning. In offline/deterministic scenarios, plan changes are timestamped in the scenario file, so the result is reproducible.
+3. Hand-over: kept events of older epochs that still sound after the freeze window end with their own fade-out at a deterministic per-event point uniform over [freeze + fade-out, freeze + 1.5 s]; the renderer applies the same cut to events already handed to it. The new plan's slots start from its stationary on/off state (on slots fade in over the same span, mid-segment; off slots wait a stationary residual off time from the end of the span). Count normalization (g_bnorm) is per epoch, so old and new talkers each keep their own plan's normalization (revised during implementation, `IMPLEMENTATION_NOTES.md` §12).
+4. It continues planning. In offline/deterministic scenarios, plan changes are timestamped in the scenario file, so the result is reproducible.
 
 ### 4.7 MultiVoice (fixed-count continuous) planner variant
 

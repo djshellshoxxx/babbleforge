@@ -61,6 +61,21 @@ struct TalkerEvent {
     std::int64_t length() const noexcept { return endSample - startSample; }
 };
 
+// Talker hand-over at a plan change (MASK_STRATEGIES.md §7 step 3, TALKER_ENGINE.md §4.6):
+// talkers of epochs < `epoch` still sounding after the freeze window finish with their own
+// fade-out, ending at a per-event point spread uniformly over [freeze + fade-out, freeze + span).
+// The planner (its event list) and the renderer (events already handed to it) apply the same
+// deterministic cut, so both agree sample-exactly.
+struct TalkerHandover {
+    std::uint32_t epoch = 0;     // events of earlier epochs are cut
+    std::int64_t freeze = 0;     // plan change + freeze window (absolute sample)
+    std::int64_t span = 0;       // samples; 0 = no hand-over
+    std::uint64_t salt = 0;      // per (seed, epoch)
+    std::int64_t mult = 1;       // base-rate grid of the engine rate (scale-exact cut points)
+    // Applies the cut to `ev` (no-op unless it is older and sounds past `freeze`); true if changed.
+    bool apply(TalkerEvent& ev) const noexcept;
+};
+
 struct PlannedEvent {
     TalkerEvent ev;
     std::shared_ptr<const ProcessedLayout> layout;  // processed audio + speech mask
@@ -85,7 +100,11 @@ public:
     void planUntil(std::int64_t t);
     // Plan change at `now` (§4.6): events starting before now + 0.5 s are kept, later ones
     // discarded (ids returned), epoch++, RNG streams re-derived from (seed, epoch, plan hash).
+    // Talkers of the old epochs finish within the hand-over (lastHandover()); the new plan's
+    // slots start from its stationary on/off state, their onsets spread over the same span.
     std::vector<std::uint64_t> replan(const TalkerPlanParams& params, std::int64_t now);
+    const TalkerHandover& lastHandover() const noexcept { return handover_; }
+    static constexpr double kHandoverS = 1.5;  // old talkers finish within freeze + 1.5 s
 
     // Hot reload: switches the planner to a new corpus snapshot at `now` (the selector it was
     // constructed with must already hold the new snapshot, see SegmentSelector::migrateFrom).
@@ -133,6 +152,7 @@ private:
         SpeakerId speaker = 0;
         bool chainFresh = true;    // fixed modes: no predecessor to cross-fade with
         bool pairedNext = false;   // next start was pulled forward by onset pairing
+        double entryFrac = -1.0;   // >= 0: next event is a hand-over entry with a residual length
     };
     static constexpr std::int64_t kNever = INT64_MIN / 4;
     std::int64_t msToSmp(double ms) const;
@@ -143,7 +163,11 @@ private:
     void initialPhase();
     void recomputeRates();
     std::int64_t offDuration(Slot& s);
-    bool construct(std::uint32_t slot, std::int64_t t, std::uint16_t flags, double residualFrac);
+    // residualFrac >= 0: initial steady-state event (virtual start before t). entryFrac >= 0: the
+    // event starts at t but lasts only that fraction of its drawn length (the residual on-time of
+    // a slot entering the stationary state at a plan change).
+    bool construct(std::uint32_t slot, std::int64_t t, std::uint16_t flags, double residualFrac,
+                   double entryFrac = -1.0);
     void commit(PlannedEvent&& pe);
     void pruneLive();
     void tick();
@@ -162,6 +186,7 @@ private:
     TalkerPlanParams p_;
     std::uint32_t epoch_ = 0;
     std::uint64_t planHash_ = 0;
+    TalkerHandover handover_;
     std::vector<Slot> slots_;
     RngStream global_{0}, gainvar_{0}, lab_{0};
     std::vector<PlannedEvent> events_;
@@ -174,6 +199,7 @@ private:
     // Count controller.
     double lambda_ = 1.0, dOnS_ = 5.0, dOffS_ = 2.0;
     std::int64_t nextTick_ = 48000;
+    std::int64_t occFloorBin_ = 0;  // count controller window start (1 s bins) after a plan change
     static constexpr std::size_t kRing = 1024;
     std::vector<std::int64_t> occ_ = std::vector<std::int64_t>(kRing, 0);
     // Forced start state.

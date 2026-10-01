@@ -44,6 +44,8 @@ void VoiceRenderer::prepare(std::size_t numChannels, std::size_t maxVoices, cons
     minEpoch_ = 0;
     freeze_ = 0;
     pos_ = 0;
+    numEpochGains_ = epochGainHead_ = 0;
+    numHandovers_ = handoverHead_ = 0;
 }
 
 bool VoiceRenderer::pushEvent(const VoiceEvent& e) noexcept { return fifo_->push(e); }
@@ -117,6 +119,18 @@ bool VoiceRenderer::rtGate(Voice& v, std::uint32_t vi, std::int64_t t0, std::int
 void VoiceRenderer::setCountNorm(double gLin, std::int64_t effectiveSample, bool immediate) noexcept {
     cmds_->push(Cmd{immediate ? CmdType::CountNormNow : CmdType::CountNorm, gLin, effectiveSample, 0});
 }
+void VoiceRenderer::beginHandover(const TalkerHandover& h) noexcept {
+    Cmd c{CmdType::Drop, 0.0, h.freeze, h.epoch};
+    c.handover = h;
+    cmds_->push(c);
+}
+void VoiceRenderer::applyHandovers(TalkerEvent& ev) const noexcept {
+    const std::size_t first = numHandovers_ < handovers_.size() ? 0 : handoverHead_;
+    for (std::size_t k = 0; k < numHandovers_; ++k) handovers_[(first + k) % handovers_.size()].apply(ev);
+}
+void VoiceRenderer::setEpochCountNorm(double gLin, std::uint32_t epoch) noexcept {
+    cmds_->push(Cmd{CmdType::CountNormEpoch, gLin, 0, epoch});
+}
 void VoiceRenderer::setTrimDb(double db, std::int64_t effectiveSample) noexcept {
     cmds_->push(Cmd{CmdType::Trim, db, effectiveSample, 0});
 }
@@ -155,6 +169,24 @@ void VoiceRenderer::computeTargets(Voice& v) noexcept {
     }
 }
 
+// Gain of the newest registered epoch <= `epoch` (epochs only grow); 1 if none is registered.
+// A voice whose epoch is newer than every registered one (its command not yet polled) takes the
+// newest value and is corrected once the command arrives.
+double VoiceRenderer::epochGainFor(std::uint32_t epoch) const noexcept {
+    double g = 1.0;
+    std::uint32_t best = 0;
+    bool found = false;
+    for (std::size_t k = 0; k < numEpochGains_; ++k) {
+        const auto& [e, v] = epochGains_[k];
+        if (e <= epoch && (!found || e >= best)) { best = e; g = v; found = true; }
+    }
+    if (!found && numEpochGains_ > 0) {  // older than the ring: oldest registered value
+        const std::size_t oldest = numEpochGains_ < kEpochGains ? 0 : epochGainHead_;
+        g = epochGains_[oldest].second;
+    }
+    return g;
+}
+
 void VoiceRenderer::freeVoice(std::size_t i) noexcept {
     Voice& v = voices_[i];
     if (v.e.chain) {
@@ -172,11 +204,22 @@ void VoiceRenderer::pollCommands() noexcept {
         if (c.type == CmdType::Drop) {
             minEpoch_ = std::max(minEpoch_, c.epoch);
             freeze_ = c.effective;
+            if (c.handover.span > 0) {
+                handovers_[handoverHead_] = c.handover;
+                handoverHead_ = (handoverHead_ + 1) % handovers_.size();
+                numHandovers_ = std::min(numHandovers_ + 1, handovers_.size());
+            }
             for (std::size_t k = order_.size(); k-- > 0;) {
                 const std::size_t i = order_[k];
-                const auto& ev = voices_[i].e.ev;
+                auto& ev = voices_[i].e.ev;
                 if (ev.epoch < minEpoch_ && ev.startSample >= freeze_ && ev.startSample > pos_) freeVoice(i);
+                else if (c.handover.span > 0) c.handover.apply(ev);
             }
+        } else if (c.type == CmdType::CountNormEpoch) {
+            // Takes effect for the voices of that epoch, which start no earlier than the plan change.
+            epochGains_[epochGainHead_] = {c.epoch, c.value};
+            epochGainHead_ = (epochGainHead_ + 1) % kEpochGains;
+            numEpochGains_ = std::min(numEpochGains_ + 1, kEpochGains);
         } else if (numPending_ < pending_.size()) {
             pending_[numPending_++] = c;
         }
@@ -201,6 +244,7 @@ void VoiceRenderer::applyControls(std::int64_t cellStart) noexcept {
         case CmdType::Trim:
             trimTarget_ = std::pow(10.0, c.value / 20.0);
             break;
+        case CmdType::CountNormEpoch:
         case CmdType::Drop:
             break;
         }
@@ -222,8 +266,10 @@ void VoiceRenderer::drain() noexcept {
         Voice& v = voices_[i];
         v.used = true;
         v.e = e;
+        applyHandovers(v.e.ev);  // an older-epoch event queued before the plan change
         v.speechIdx = 0;
-        v.gainTarget = v.gain = static_cast<double>(e.ev.segGainLin);
+        v.epochGain = epochGainFor(e.ev.epoch);
+        v.gainTarget = v.gain = static_cast<double>(e.ev.segGainLin) * v.epochGain;
         v.started = !realtime_;
         v.fastFade = false;
         v.postpones = 0;
@@ -294,6 +340,10 @@ void VoiceRenderer::renderSub(float* const* out, std::size_t offset, std::size_t
             if (ev.slot < kMaxSlots &&
                 (*slotGainVer_)[ev.slot].load(std::memory_order_acquire) != v.gainVer)
                 computeTargets(v);
+            if (const double eg = epochGainFor(ev.epoch); eg != v.epochGain) {
+                v.epochGain = eg;
+                v.gainTarget = static_cast<double>(ev.segGainLin) * eg;
+            }
             const std::int64_t fi = ev.fadeInLen;
             const std::int64_t fos = ev.fadeOutStart - ev.startSample;
             const std::int64_t foLen = ev.endSample - ev.fadeOutStart;

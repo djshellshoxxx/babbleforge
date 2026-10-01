@@ -55,7 +55,7 @@ BabbleEngine::BabbleEngine(std::shared_ptr<const CorpusSnapshot> snap, IAudioSou
     renderer_.prepare(cfg_.numChannels, maxVoices, pool_.get(), cfg_.fs, cfg_.externalFeed);
     ptrs_.assign(cfg_.numChannels, nullptr);
     gbnorm_ = computeCountNorm();
-    renderer_.setCountNorm(gbnorm_, 0, true);
+    renderer_.setEpochCountNorm(gbnorm_, planner_->epoch());
     nextTrimUpdate_ = trimCadence_;
     trimFrozenUntil_ = trimFreeze_;
 }
@@ -84,10 +84,10 @@ void BabbleEngine::applyReplan() {
         std::erase_if(pending_, [&](const PlannedEvent& pe) {
             return std::find(discarded.begin(), discarded.end(), pe.ev.eventId) != discarded.end();
         });
-        renderer_.dropStale(planner_->epoch(), r.at + planner_->freezeSamples());
     }
+    renderer_.beginHandover(planner_->lastHandover());
     gbnorm_ = computeCountNorm();
-    renderer_.setCountNorm(gbnorm_, r.at);
+    renderer_.setEpochCountNorm(gbnorm_, planner_->epoch());
     trimFrozenUntil_ = r.at + trimFreeze_;
 }
 
@@ -95,9 +95,9 @@ std::vector<std::uint64_t> BabbleEngine::applyReplanNow(const TalkerPlanParams& 
     TalkerPlanParams p = params;
     p.talkerRefDbfs = cfg_.busLevelDbfs;
     const auto discarded = planner_->replan(p, atSample);
-    if (!discarded.empty()) renderer_.dropStale(planner_->epoch(), atSample + planner_->freezeSamples());
+    renderer_.beginHandover(planner_->lastHandover());
     gbnorm_ = computeCountNorm();
-    renderer_.setCountNorm(gbnorm_, atSample);
+    renderer_.setEpochCountNorm(gbnorm_, planner_->epoch());
     return discarded;
 }
 
@@ -108,9 +108,9 @@ std::vector<std::uint64_t> BabbleEngine::adoptCorpus(std::shared_ptr<const Corpu
     *selector_ = SegmentSelector(snap, old.config());
     selector_->migrateFrom(old, map);
     const auto discarded = planner_->adoptSnapshot(std::move(snap), map, atSample);
-    if (!discarded.empty()) renderer_.dropStale(planner_->epoch(), atSample + planner_->freezeSamples());
+    renderer_.beginHandover(planner_->lastHandover());
     gbnorm_ = computeCountNorm();
-    renderer_.setCountNorm(gbnorm_, atSample);
+    renderer_.setEpochCountNorm(gbnorm_, planner_->epoch());
     return discarded;
 }
 

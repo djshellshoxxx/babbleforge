@@ -66,6 +66,20 @@ double fadeSqIntegral(double a, double b, double fi, double fos, double len) {
 }
 }  // namespace
 
+bool TalkerHandover::apply(TalkerEvent& ev) const noexcept {
+    if (span <= 0 || ev.epoch >= epoch || ev.endSample <= freeze) return false;
+    const std::int64_t fo = std::max<std::int64_t>(0, ev.endSample - ev.fadeOutStart);
+    const std::int64_t room = std::max<std::int64_t>(0, span - fo) / mult;
+    SplitMix64 sm(salt ^ (ev.eventId * 0x9E3779B97F4A7C15ULL));
+    const double u = static_cast<double>(sm.next() >> 11) * 0x1.0p-53;
+    const std::int64_t cutEnd = freeze + fo + static_cast<std::int64_t>(u * static_cast<double>(room)) * mult;
+    const std::int64_t fos = std::max(cutEnd - fo, ev.startSample + ev.fadeInLen);
+    if (fos + fo >= ev.endSample) return false;
+    ev.fadeOutStart = fos;
+    ev.endSample = fos + fo;
+    return true;
+}
+
 std::int64_t TalkerPlanner::msToSmp(double ms) const { return msToEngine(ms, fs_); }
 std::int64_t TalkerPlanner::sToSmp(double s) const { return secondsToEngine(s, fs_); }
 
@@ -182,12 +196,16 @@ void TalkerPlanner::addOccupancy(const TalkerEvent& ev, int sign) {
 
 void TalkerPlanner::tick() {
     const std::int64_t k = nextTick_ / fs_;
-    const std::int64_t lo = std::max<std::int64_t>(0, k - 60);
-    std::int64_t sum = 0;
-    for (std::int64_t b = lo; b < k; ++b) sum += occ_[static_cast<std::size_t>(b) % kRing];
-    const double meanActive = static_cast<double>(sum) / static_cast<double>((k - lo) * fs_);
-    const double m = std::max(p_.mean, 1e-3);
-    lambda_ = std::clamp(lambda_ + 0.02 * (m - meanActive) / m, 0.7, 1.3);
+    // After a plan change the window starts at the end of the hand-over: the old plan's
+    // occupancy says nothing about the new plan's count (and would bias lambda for 60 s).
+    const std::int64_t lo = std::max<std::int64_t>({0, k - 60, occFloorBin_});
+    if (k - lo >= (occFloorBin_ > 0 ? 10 : 1)) {
+        std::int64_t sum = 0;
+        for (std::int64_t b = lo; b < k; ++b) sum += occ_[static_cast<std::size_t>(b) % kRing];
+        const double meanActive = static_cast<double>(sum) / static_cast<double>((k - lo) * fs_);
+        const double m = std::max(p_.mean, 1e-3);
+        lambda_ = std::clamp(lambda_ + 0.02 * (m - meanActive) / m, 0.7, 1.3);
+    }
     if (k >= 61) occ_[static_cast<std::size_t>(k - 61) % kRing] = 0;
     nextTick_ += fs_;
 }
@@ -235,7 +253,8 @@ void TalkerPlanner::commit(PlannedEvent&& pe) {
     events_.push_back(std::move(pe));
 }
 
-bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t flags, double residualFrac) {
+bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t flags, double residualFrac,
+                              double entryFrac) {
     Slot& s = slots_[j];
     const bool stochastic = p_.mode == PlanMode::Stochastic;
     const bool residual = residualFrac >= 0.0;
@@ -257,7 +276,6 @@ bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t fla
     const std::int64_t maxLen = sToSrc(p_.segMaxS + 1.5) + msToSrc(p_.fadeOutMs * 1.3) + 8 * msToSrc(40.0);
     auto layout = std::make_shared<ProcessedLayout>(
         buildProcessedLayout(*snap_, pk->recording, pk->anchor, msToSrc(p_.maxGapMs), maxLen, fs_));
-    const std::int64_t avail = layout->length;
 
     std::int64_t fi, fo;
     if (stochastic) {
@@ -266,8 +284,27 @@ bool TalkerPlanner::construct(std::uint32_t j, std::int64_t t, std::uint16_t fla
     } else {
         fi = fo = fixedOvl;
     }
-    std::int64_t L = sToSmp(truncatedLogNormalMedian(s.rng, p_.medianS, p_.sigmaLn, p_.segMinS, p_.segMaxS));
+    double drawnS = truncatedLogNormalMedian(s.rng, p_.medianS, p_.sigmaLn, p_.segMinS, p_.segMaxS);
     const std::int64_t minBody = msToSmp(250.0);
+    std::int64_t entryLen = -1;
+    if (entryFrac >= 0.0) {
+        // Hand-over entry (a slot found "on" at a random instant of the new plan): a length-biased
+        // segment length (rejection against segMaxS), entered at a uniform point of it. The talker
+        // fades in mid-segment, so the entering talkers are not all at a phrase onset at once.
+        for (int k = 0; k < 64 && s.rng.uniform01() * p_.segMaxS > drawnS; ++k)
+            drawnS = truncatedLogNormalMedian(s.rng, p_.medianS, p_.sigmaLn, p_.segMinS, p_.segMaxS);
+        const std::int64_t D = std::min(sToSmp(drawnS), layout->length);
+        std::int64_t elapsed = fracOf(1.0 - entryFrac, D);
+        elapsed = std::clamp<std::int64_t>(elapsed, 0, std::max<std::int64_t>(0, D - (fi + fo + minBody)));
+        if (elapsed > 0) {
+            pk->anchor = layout->sourcePosAt(elapsed);
+            layout = std::make_shared<ProcessedLayout>(
+                buildProcessedLayout(*snap_, pk->recording, pk->anchor, msToSrc(p_.maxGapMs), maxLen, fs_));
+        }
+        entryLen = std::max(D - elapsed, fi + fo + minBody);
+    }
+    const std::int64_t avail = layout->length;
+    std::int64_t L = entryLen >= 0 ? entryLen : sToSmp(drawnS);
     if (avail < fi + fo + minBody) {
         sel_.commit(*pk, layout->sourcePosAt(avail), t, t + avail);
         ++stats_.pickFailures;
@@ -492,12 +529,13 @@ void TalkerPlanner::planStochastic(std::int64_t T) {
         const int speakingBefore = speakingOthersAt(tc);
         std::uint16_t flags = forced ? kEvForced : 0;
         if (slots_[jc].pairedNext) flags |= kEvPaired;
-        if (!construct(static_cast<std::uint32_t>(jc), tc, flags, -1.0)) {
+        if (!construct(static_cast<std::uint32_t>(jc), tc, flags, -1.0, slots_[jc].entryFrac)) {
             if (forced) forcedBlockedUntil_ = tc + msToSmp(200.0);
             else slots_[jc].nextStart = tc + msToSmp(200.0);
             continue;
         }
         slots_[jc].pairedNext = false;
+        slots_[jc].entryFrac = -1.0;
         if (forced) {
             pendingOverlapValid_ = false;
             ++stats_.forcedStarts;
@@ -560,6 +598,20 @@ std::vector<std::uint64_t> TalkerPlanner::replan(const TalkerPlanParams& params,
     }
     taken_ = std::min(taken_, events_.size());
     ++epoch_;
+    // Hand-over: the kept talkers of the old plan finish within kHandoverS after the freeze window.
+    handover_.epoch = epoch_;
+    handover_.freeze = freeze;
+    handover_.span = sToSmp(kHandoverS);
+    handover_.salt = SplitMix64(params.seed ^ (static_cast<std::uint64_t>(epoch_) * 0xD1B54A32D192ED03ULL) ^
+                                0x68616E646F766572ULL).next();
+    handover_.mult = mult_;
+    occFloorBin_ = (freeze + handover_.span + fs_ - 1) / fs_;
+    for (auto& pe : events_) {
+        const TalkerEvent before = pe.ev;
+        if (!handover_.apply(pe.ev)) continue;
+        addOccupancy(before, -1);
+        addOccupancy(pe.ev, +1);
+    }
     p_ = params;
     planHash_ = p_.hash();
     const std::size_t V = p_.slots();
@@ -602,23 +654,45 @@ std::vector<std::uint64_t> TalkerPlanner::replan(const TalkerPlanParams& params,
             used[set[k]] = true;
         }
     }
+    // The new plan's slots start from its stationary state, independent of the old plan's
+    // occupancy: a slot is on with probability m / V (fixed modes: always). An on slot whose old
+    // talker is still finishing takes over at that talker's fade-out (a per-slot cross-fade);
+    // other on slots start at a uniform point of the hand-over span. The old talkers end over
+    // the same span, so with per-epoch count normalisation the expected bus power stays at
+    // L_ref through the hand-over. Off slots wait a stationary (memoryless) off time.
+    const std::int64_t span = handover_.span;
+    const double pOn = std::min(1.0, p_.targetMean() / static_cast<double>(std::max<std::size_t>(V, 1)));
     for (std::size_t j = 0; j < V; ++j) {
         Slot& s = slots_[j];
         s.lastEnd = lastOf[j] ? lastOf[j]->endSample : kNever;
+        const bool finishing = lastOf[j] && lastOf[j]->fadeOutStart >= freeze;
+        const double u = s.rng.uniform01();
         if (p_.mode == PlanMode::Stochastic) {
-            if (s.lastEnd > freeze) {
-                s.nextStart = s.lastEnd + offDuration(s);
+            const bool on = s.rng.uniform01() < pOn;
+            if (on) {
+                // Its first talker lasts a residual on-time (uniform fraction of a drawn length),
+                // so the new talkers do not all end together one segment length later.
+                // Fade-ins end where the old talkers' fade-outs end (uniform over the span).
+                s.nextStart = finishing ? lastOf[j]->fadeOutStart
+                                        : freeze + fracOf(u, std::max<std::int64_t>(0, span - msToSmp(p_.fadeInMs)));
+                s.entryFrac = 1.0 - s.rng.uniform01();
             } else {
+                // Off: the stationary residual of an off period (cooldown + exponential), counted
+                // from the end of the hand-over (no extra entries while the on slots come in).
+                // The old plan's talker in this slot does not start a cooldown of the new plan.
                 const double cd = p_.reEntryCooldownMs / 1000.0;
                 const double meanEff = std::max(dOffS_ / lambda_ - cd, 0.05);
-                s.nextStart = std::max(cooldownEnd(s), freeze) + sToSmp(exponential(s.rng, meanEff));
+                const double inCooldown = s.rng.uniform01(), where = s.rng.uniform01();
+                const double restCd = inCooldown * (cd + meanEff) < cd ? where * cd : 0.0;
+                s.nextStart = std::max(s.lastEnd + guard_, freeze + span) + sToSmp(restCd) +
+                              sToSmp(exponential(s.rng, meanEff));
             }
             s.chainFresh = false;
-        } else if (lastOf[j] && lastOf[j]->fadeOutStart >= freeze) {
+        } else if (finishing) {
             s.nextStart = lastOf[j]->fadeOutStart;
             s.chainFresh = false;
         } else {
-            s.nextStart = freeze;
+            s.nextStart = freeze + fracOf(u, span);
             s.chainFresh = true;
         }
     }

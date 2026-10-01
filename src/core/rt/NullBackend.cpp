@@ -80,6 +80,7 @@ BackendOpenResult NullBackend::open(const std::string& deviceId, double sampleRa
     openId_ = deviceId;
     openHistory_.push_back(deviceId);
     xruns_.store(0, std::memory_order_relaxed);
+    timerLate_.store(0, std::memory_order_relaxed);
     r.ok = true;
     r.sampleRate = fs_;
     r.bufferFrames = buffer_;
@@ -233,6 +234,7 @@ void NullBackend::run() {
     const auto sleepUntil = [](clock::time_point t) { std::this_thread::sleep_until(t); };
 #endif
     auto deadline = clock::now();
+    auto prevEnd = deadline;  // when the previous callback returned
     while (!quit_.load(std::memory_order_acquire)) {
         if (const int st = stallMs_.exchange(0, std::memory_order_acq_rel); st > 0) {
             // A stalled driver: sleep in small steps so stop() stays responsive.
@@ -251,11 +253,23 @@ void NullBackend::run() {
         sleepUntil(wake);
         if (quit_.load(std::memory_order_acquire)) break;
         const auto now = clock::now();
-        if (now > deadline + (periods_.load(std::memory_order_relaxed) - 1) * period) {  // the device ran dry
-            xruns_.fetch_add(1, std::memory_order_relaxed);
+        const auto dryAt = deadline + (periods_.load(std::memory_order_relaxed) - 1) * period;
+        cb->audioCallback(ptrs_.data(), nOut, frames);
+        const auto end = clock::now();
+        if (now > dryAt) {  // the device ran dry
+            // Attribution: had this thread woken on time, would the callbacks still have missed
+            // the buffer (the previous one returned late or this one ran long)? Then it is an
+            // xrun of the audio callback. Otherwise the emulated device's own timer thread
+            // overslept (host scheduling of a non-real-time thread), which a hardware clock
+            // does not do: counted separately, the stream resynchronises either way.
+            const auto readyOnTime = std::max(prevEnd, deadline) + (end - now);
+            if (readyOnTime > dryAt)
+                xruns_.fetch_add(1, std::memory_order_relaxed);
+            else
+                timerLate_.fetch_add(1, std::memory_order_relaxed);
             deadline = now;
         }
-        cb->audioCallback(ptrs_.data(), nOut, frames);
+        prevEnd = end;
         if (Observer* o = observer_.load(std::memory_order_acquire)) o->onOutput(ptrs_.data(), nOut, frames);
         callbacks_.fetch_add(1, std::memory_order_relaxed);
         frames_.fetch_add(static_cast<std::uint64_t>(frames), std::memory_order_relaxed);

@@ -65,6 +65,9 @@ public:
 
     // ---- observation ----
     std::uint64_t callbacks() const noexcept { return callbacks_.load(std::memory_order_relaxed); }
+    // Late wake-ups of the emulated device's timer thread that ran the device dry although the
+    // callbacks themselves were on time (host scheduling; not counted as xruns).
+    std::uint64_t timerLateCount() const noexcept { return timerLate_.load(std::memory_order_relaxed); }
     std::uint64_t framesProcessed() const noexcept { return frames_.load(std::memory_order_relaxed); }
     std::vector<std::string> openHistory() const;  // every device id passed to a successful open()
     double sampleRate() const;
@@ -92,7 +95,7 @@ private:
     std::atomic<int> stallMs_{0};
     std::atomic<int> periods_{2};
     std::atomic<double> jitterMs_{0.0};
-    std::atomic<std::uint64_t> xruns_{0}, callbacks_{0}, frames_{0};
+    std::atomic<std::uint64_t> xruns_{0}, timerLate_{0}, callbacks_{0}, frames_{0};
     std::atomic<Observer*> observer_{nullptr};
     std::vector<std::vector<float>> bufs_;
     std::vector<float*> ptrs_;

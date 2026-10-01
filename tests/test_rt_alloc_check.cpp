@@ -68,7 +68,7 @@ TEST_CASE("RT check: 20 s NullBackend run without RT allocations, locks or xruns
     INFO("RT allocations " << allocs << " frees " << frees << " locks " << locks << " | callbacks " << m.callbacks
                            << " xruns " << m.xruns << " overruns " << m.overruns << " gaps " << m.callbackGaps
                            << " | load p50 " << m.dspLoadP50 << " p99 " << m.dspLoadP99 << " max " << m.dspLoadMax
-                           << " | late " << m.lateStarts << " starv " << m.starvations << " under " << m.underflows
+                           << " | device timer late " << backend.timerLateCount() << " | late " << m.lateStarts << " starv " << m.starvations << " under " << m.underflows
                            << " | p99 read " << m.p99ReadLatencyMs << " ms minBuf " << m.minBufferedS
                            << " s | tap drops " << m.tapOverflowFrames);
     CHECK(allocs == 0);

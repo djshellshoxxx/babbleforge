@@ -231,7 +231,7 @@ CVR r ∈ [0, 1] (GUI Low = 0.0, Medium = 0.5, High = 1.0; default High) acts on
 |---|---|
 | 1 | Control thread builds plan B, validates it, and builds new FIR kernels (asynchronously; ≤ 200 ms typical) |
 | 2 | Plan B is posted to the RT thread via an RCU pointer swap |
-| 3 | If the talker models differ, the planner starts a new epoch: talkers of plan A are allowed to finish with their planned fade-outs (max 1.5 s), and plan-B talkers start with standard stochastic onsets (first 1.5 s uses 2× start hazard) |
+| 3 | If the talker models differ, the planner starts a new epoch: talkers of plan A finish with their own fade-outs within 1.5 s after the 0.5 s freeze window (per-event cut points spread uniformly over the span), and plan B's slots start from its stationary on/off state, the on slots fading in over the same span (mid-segment, taking over from the slot's finishing plan-A talker where there is one). Each talker keeps the count normalization of the plan that scheduled it, so the expected babble power stays at L_ref through the hand-over (revised during implementation, `IMPLEMENTATION_NOTES.md` §12) |
 | 4 | Mix fractions ramp linearly in b over 2 s (constant-power law, §4) |
 | 5 | FIR kernels are crossfaded (two convolvers per channel active during 100 ms, equal-power) |
 | 6 | Babble trim freezes for 10 s |

@@ -1,0 +1,29 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "x-fixture": "H75",
+  "x-description": "Hybrid, 8-talker babble, b=0.75",
+  "preset": {
+    "name": "validation-H75",
+    "area": "office",
+    "strategy": "research",
+    "outputs": {
+      "layout": "mono"
+    }
+  },
+  "seed": 1001,
+  "durationS": 300,
+  "sampleRate": 48000,
+  "outputFormat": {
+    "container": "wav",
+    "sampleFormat": "float32"
+  },
+  "laboratory": {
+    "mode": "hybrid",
+    "rmsNormalization": "two-pass",
+    "talkers": 8,
+    "maxGapMs": 100,
+    "babbleFraction": 0.75,
+    "spectrumMatch": "strict"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "x-fixture": "B7",
+  "x-description": "LaboratoryMask continuousN N=7, maxGap 100 ms, nested speaker sets",
+  "preset": {
+    "name": "validation-B7",
+    "area": "office",
+    "strategy": "research",
+    "outputs": {
+      "layout": "mono"
+    }
+  },
+  "seed": 1001,
+  "durationS": 300,
+  "sampleRate": 48000,
+  "outputFormat": {
+    "container": "wav",
+    "sampleFormat": "float32"
+  },
+  "laboratory": {
+    "mode": "continuousN",
+    "rmsNormalization": "two-pass",
+    "talkers": 7,
+    "maxGapMs": 100,
+    "spectrumMatch": "strict"
+  }
+}

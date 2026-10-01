@@ -40,3 +40,27 @@ jobs:
     - name: Test
       shell: bash
       run: ctest --test-dir build --output-on-failure
+
+  validation-python:
+    name: validation-python
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install tools
+      run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+    - name: Build bfrender + bfanalyze
+      run: |
+        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBF_BUILD_TESTS=OFF
+        cmake --build build --target bfrender bfanalyze
+
+    - name: Install Python dependencies
+      run: python -m pip install numpy scipy pytest soundfile
+
+    - name: Python validation tests
+      run: python -m pytest tools/validation -v

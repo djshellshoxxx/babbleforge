@@ -1,0 +1,28 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "x-fixture": "SL5",
+  "x-description": "Stationary noise, -5 dB/oct",
+  "preset": {
+    "name": "validation-SL5",
+    "area": "office",
+    "strategy": "research",
+    "outputs": {
+      "layout": "mono"
+    },
+    "spectrum": {
+      "target": "slope_-5"
+    }
+  },
+  "seed": 1001,
+  "durationS": 300,
+  "sampleRate": 48000,
+  "outputFormat": {
+    "container": "wav",
+    "sampleFormat": "float32"
+  },
+  "laboratory": {
+    "mode": "ssn",
+    "rmsNormalization": "two-pass"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "schema": "babbleforge.scenario",
+  "schemaVersion": "1.0",
+  "x-fixture": "BAL",
+  "x-description": "Office stochastic balanced",
+  "preset": {
+    "name": "validation-BAL",
+    "area": "office",
+    "strategy": "balanced",
+    "outputs": {
+      "layout": "stereo"
+    }
+  },
+  "seed": 1001,
+  "durationS": 600,
+  "sampleRate": 48000,
+  "outputFormat": {
+    "container": "wav",
+    "sampleFormat": "float32"
+  }
+}

@@ -1,70 +1,43 @@
-// BabbleForge GUI shell: empty main window + status bar bound to the EngineController status
-// (docs/GUI.md §61). The full GUI comes later.
+// BabbleForge GUI application (docs/GUI.md, docs/GUI_ARCHITECTURE.md).
+//
+//   BabbleForge [--data-dir <dir>] [--corpus <dir>] [--state-dir <dir>]
+//   BabbleForge --run-ui-tests        headless GUI tests (exit code = failures > 0)
 #include <memory>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include "backend/JuceAudioBackend.h"
-#include "core/config/DataSet.h"
-#include "core/rt/EngineController.h"
+#include "LookAndFeel.h"
+#include "MainComponent.h"
+#include "core/corpus/CorpusLoader.h"
 
 #ifndef BF_DEFAULT_DATA_DIR
 #define BF_DEFAULT_DATA_DIR "resources/data"
 #endif
 
+namespace bf::gui {
+int runUiTests();  // tests/UiTests.cpp
+}
+
 namespace {
 
-class StatusBar final : public juce::Component, private juce::Timer {
-public:
-    explicit StatusBar(bf::rt::EngineController* c) : ctl_(c) {
-        refresh();
-        startTimerHz(10);
-    }
-    void paint(juce::Graphics& g) override {
-        g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId).darker(0.3f));
-        g.setColour(juce::Colours::lightgrey);
-        g.setFont(14.0f);
-        g.drawText(text_, getLocalBounds().reduced(8, 0), juce::Justification::centredLeft);
-    }
+using namespace bf::gui;
 
-private:
-    void timerCallback() override { refresh(); }
-    void refresh() {
-        if (!ctl_) return;
-        (void)ctl_->pollStatus();  // coalesced status; state() below is always current
-        const auto m = ctl_->metrics();
-        const auto dev = ctl_->config().deviceId;
-        text_ = juce::String("Output: ") + (dev.empty() ? "none" : dev) +
-                "     Engine: " + std::string(bf::rt::headlineFor(ctl_->state())) +
-                "     CPU: " + (m.dspLoadP99 > 0.5 ? "High" : "Normal");
-        repaint();
-    }
-    bf::rt::EngineController* ctl_;
-    juce::String text_;
-};
-
-class MainComponent final : public juce::Component {
-public:
-    explicit MainComponent(bf::rt::EngineController* c) : bar_(c) {
-        addAndMakeVisible(bar_);
-        setSize(900, 600);
-    }
-    void paint(juce::Graphics& g) override { g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId)); }
-    void resized() override { bar_.setBounds(getLocalBounds().removeFromBottom(28)); }
-
-private:
-    StatusBar bar_;
-};
+juce::String argValue(const juce::StringArray& args, const juce::String& name) {
+    const int i = args.indexOf(name);
+    return (i >= 0 && i + 1 < args.size()) ? args[i + 1].unquoted() : juce::String();
+}
 
 class MainWindow final : public juce::DocumentWindow {
 public:
-    explicit MainWindow(bf::rt::EngineController* c)
-        : DocumentWindow("BabbleForge", juce::Colours::darkgrey, DocumentWindow::allButtons) {
+    explicit MainWindow(MainComponent* content)
+        : DocumentWindow("BabbleForge", Theme::get().bg, DocumentWindow::allButtons) {
         setUsingNativeTitleBar(true);
-        setContentOwned(new MainComponent(c), true);
+        setContentOwned(content, true);
         setResizable(true, true);
+        setResizeLimits(760, 560, 10000, 10000);
         centreWithSize(getWidth(), getHeight());
         setVisible(true);
+        content->grabKeyboardFocus();
     }
     void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 };
@@ -73,27 +46,86 @@ class App final : public juce::JUCEApplication {
 public:
     const juce::String getApplicationName() override { return "BabbleForge"; }
     const juce::String getApplicationVersion() override { return "0.1.0"; }
-    void initialise(const juce::String&) override {
-        const auto dsr = bf::loadDataSet(BF_DEFAULT_DATA_DIR);
-        if (dsr.ok) {
-            data_ = std::make_unique<bf::DataSet>(dsr.data);
-            bf::rt::EngineControllerConfig cfg;
-            cfg.dataSet = data_.get();
-            cfg.backend = &backend_;
-            ctl_ = std::make_unique<bf::rt::EngineController>(cfg);
+    bool moreThanOneInstanceAllowed() override { return true; }
+
+    void initialise(const juce::String& commandLine) override {
+        lnf_ = std::make_unique<BfLookAndFeel>();
+        juce::LookAndFeel::setDefaultLookAndFeel(lnf_.get());
+        const auto args = juce::StringArray::fromTokens(commandLine, true);
+        if (args.contains("--run-ui-tests")) {
+            const int failures = runUiTests();
+            setApplicationReturnValue(failures > 0 ? 1 : 0);
+            quit();
+            return;
         }
-        window_ = std::make_unique<MainWindow>(ctl_.get());
+
+        juce::String dataDir = argValue(args, "--data-dir");
+        if (dataDir.isEmpty()) {
+            const auto beside = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getSiblingFile("data");
+            dataDir = beside.isDirectory() ? beside.getFullPathName() : juce::String(BF_DEFAULT_DATA_DIR);
+        }
+        auto dsr = bf::loadDataSet(toPath(dataDir));
+        if (!dsr.ok) {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "BabbleForge",
+                                                   "The configuration data could not be loaded:\n" + juce::String(dsr.error),
+                                                   "Quit", nullptr,
+                                                   juce::ModalCallbackFunction::create([](int) { quit(); }));
+            return;
+        }
+        data_ = std::make_unique<bf::DataSet>(std::move(dsr.data));
+
+        juce::String stateDir = argValue(args, "--state-dir");
+        const auto appDir = stateDir.isNotEmpty() ? toPath(stateDir) : AppSettings::defaultDirectory();
+        settings_ = std::make_unique<AppSettings>(appDir / "settings.json");
+        juce::Desktop::getInstance().setGlobalScaleFactor(static_cast<float>(settings_->get().uiScale));
+
+        EngineBridge::Options o;
+        o.dataSet = data_.get();
+        o.deviceId = settings_->get().deviceId;
+        o.stateDir = appDir;
+        juce::String corpusRoot = argValue(args, "--corpus");
+        if (corpusRoot.isEmpty()) corpusRoot = juce::String::fromUTF8(settings_->get().corpusRoot.c_str());
+        if (corpusRoot.isNotEmpty()) {
+            std::string err;
+            if (bf::loadCorpus(toPath(corpusRoot), corpus_, &err)) {
+                o.corpus = corpus_.snapshot;
+                o.audio = corpus_.audio.get();
+            } else {
+                DBG("voice library not loaded: " << err);
+            }
+        }
+        bridge_ = std::make_unique<EngineBridge>(o);
+        state_ = std::make_unique<AppState>(*data_, *settings_, undo_, bridge_->startupPreset());
+        bridge_->attach(*state_);
+        session_ = std::make_unique<PresetSession>(*state_, appDir / "user_presets");
+        window_ = std::make_unique<MainWindow>(new MainComponent(*state_, *session_, *bridge_, *settings_));
     }
+
     void shutdown() override {
         window_.reset();
-        ctl_.reset();
+        if (bridge_ && settings_) {
+            const auto dev = bridge_->deviceId();
+            if (dev != settings_->get().deviceId) settings_->update([dev](AppSettingsData& d) { d.deviceId = dev; });
+        }
+        session_.reset();
+        bridge_.reset();  // stops the engine; must go before the AppState it listens to
+        state_.reset();
+        settings_.reset();  // flushes settings.json
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+        lnf_.reset();
     }
+
     void systemRequestedQuit() override { quit(); }
 
 private:
-    bf::rt::JuceAudioBackend backend_;
+    std::unique_ptr<BfLookAndFeel> lnf_;
     std::unique_ptr<bf::DataSet> data_;
-    std::unique_ptr<bf::rt::EngineController> ctl_;
+    bf::LoadedCorpus corpus_;
+    std::unique_ptr<AppSettings> settings_;
+    juce::UndoManager undo_;
+    std::unique_ptr<EngineBridge> bridge_;
+    std::unique_ptr<AppState> state_;
+    std::unique_ptr<PresetSession> session_;
     std::unique_ptr<MainWindow> window_;
 };
 

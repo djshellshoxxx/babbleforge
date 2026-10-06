@@ -96,6 +96,7 @@ private:
     juce::ComboBox scale_;
     HelpButton scaleHelp_{"Makes everything in the window larger or smaller."};
     juce::TextButton showIntro_{"Show Advanced mode explanation again"};
+    juce::ToggleButton tooltips_{"Show tooltips"};
     // Logging
     juce::Label levelCaption_;
     juce::ComboBox logLevel_;

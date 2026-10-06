@@ -30,6 +30,7 @@ struct AppSettingsData {
     std::string lastPage = "run";
     double uiScale = 1.0;               // desktop scale factor (GUI look & feel)
     std::string theme = "dark";
+    bool tooltipsEnabled = true;
     std::string corpusRoot;             // voice library root (Settings page)
     nlohmann::json extra = nlohmann::json::object();  // unknown keys / other pages' settings, preserved
 };

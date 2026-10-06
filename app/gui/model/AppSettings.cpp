@@ -43,7 +43,8 @@ nlohmann::json AppSettings::toJson(const AppSettingsData& d) {
                {"advancedIntroShown", d.advancedIntroShown},
                {"lastPage", d.lastPage},
                {"scale", d.uiScale},
-               {"theme", d.theme}};
+               {"theme", d.theme},
+               {"tooltipsEnabled", d.tooltipsEnabled}};
     j["audio"] = {{"deviceId", d.deviceId}};
     j["corpus"] = {{"root", d.corpusRoot}};
     return j;
@@ -64,6 +65,8 @@ AppSettingsData AppSettings::fromJson(const nlohmann::json& j) {
             d.uiScale = juce::jlimit(0.5, 3.0, u["scale"].get<double>());
         str(u, "lastPage", d.lastPage);
         str(u, "theme", d.theme);
+        if (u.contains("tooltipsEnabled") && u["tooltipsEnabled"].is_boolean())
+            d.tooltipsEnabled = u["tooltipsEnabled"].get<bool>();
     }
     if (j.contains("audio")) str(j["audio"], "deviceId", d.deviceId);
     if (j.contains("corpus")) str(j["corpus"], "root", d.corpusRoot);

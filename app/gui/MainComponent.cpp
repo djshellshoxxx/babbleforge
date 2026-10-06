@@ -52,6 +52,8 @@ MainComponent::MainComponent(AppState& state, PresetSession& session, EngineBrid
     advancedBtn_.setTooltip("Show detailed audio and masking controls.");
     gear_.setTooltip("Settings");
     gear_.onClick = [this] { showPage("settings"); };
+    ctx_.setTooltipsEnabled = [this](bool on) { applyTooltipSetting(on); };
+    applyTooltipSetting(settings_.get().tooltipsEnabled);
 
     viewport_.setScrollBarsShown(true, false);
     viewport_.setScrollBarThickness(10);
@@ -295,6 +297,15 @@ void MainComponent::openChangesDialog() {
     });
     d->addButton("Keep Changes", nullptr, true);
     showDialog(std::move(d));
+}
+
+void MainComponent::applyTooltipSetting(bool enabled) {
+    if (enabled) {
+        if (tooltips_ == nullptr)
+            tooltips_ = std::make_unique<juce::TooltipWindow>(this, 600);
+    } else {
+        tooltips_.reset();
+    }
 }
 
 void MainComponent::openHelp() {

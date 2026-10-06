@@ -68,6 +68,7 @@ private:
     void rebuildSidebar();
     void updateHeader();
     void sizePage();
+    void applyTooltipSetting(bool enabled);
 
     AppState& state_;
     PresetSession& session_;
@@ -88,7 +89,7 @@ private:
     StatusBar status_;
     SafetyBanner safety_;
     std::unique_ptr<OverlayDialog> dialog_;
-    juce::TooltipWindow tooltips_{this, 600};
+    std::unique_ptr<juce::TooltipWindow> tooltips_;
     ShortcutListener shortcuts_{*this};
     juce::Component* keyTarget_ = nullptr;
 };

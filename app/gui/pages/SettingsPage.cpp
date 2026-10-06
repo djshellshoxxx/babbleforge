@@ -170,6 +170,16 @@ SettingsPage::SettingsPage(PageContext& c) : Page(c) {
     addAndMakeVisible(scaleHelp_);
     addRow(scale_, 36, &scaleHelp_);
     noFocus(showIntro_);
+    tooltips_.setTooltip("Show contextual hover help over controls throughout BabbleForge.");
+    tooltips_.setToggleState(ctx.settings.get().tooltipsEnabled, juce::dontSendNotification);
+    tooltips_.onClick = [this] {
+        const bool on = tooltips_.getToggleState();
+        ctx.settings.update([on](AppSettingsData& d) { d.tooltipsEnabled = on; });
+        if (ctx.setTooltipsEnabled) ctx.setTooltipsEnabled(on);
+    };
+    addAndMakeVisible(tooltips_);
+    addRow(tooltips_, 30);
+
     showIntro_.setTooltip("Show the explanation the next time Advanced mode is switched on.");
     showIntro_.onClick = [this] { ctx.settings.update([](AppSettingsData& d) { d.advancedIntroShown = false; }); };
     addAndMakeVisible(showIntro_);

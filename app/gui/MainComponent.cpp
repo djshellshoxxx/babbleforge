@@ -310,16 +310,44 @@ void MainComponent::applyTooltipSetting(bool enabled) {
 
 void MainComponent::openHelp() {
     auto body = std::make_unique<juce::Label>();
-    body->setText("Space\tStart / Stop masking\n"
-                  "Ctrl+1 ... Ctrl+5\tRun, Mask, Area, Output, Analysis\n"
-                  "Ctrl+S\tSave preset\n"
-                  "Ctrl+Z / Ctrl+Shift+Z\tUndo / Redo\n"
-                  "F1\tThis help\n\n"
-                  "Hover over any control for an explanation.",
-                  juce::dontSendNotification);
-    body->setFont(fonts::body(15.0f));
+    body->setText(
+        "GETTING STARTED\n"
+        "Choose an output device in Settings, select a masking preset, then use RUN to start or stop masking. "
+        "Simple mode exposes the everyday controls; Advanced mode adds detailed masking, area, output and analysis controls.\n\n"
+        "RUN\n"
+        "Start and stop masking, review the active configuration and monitor basic operating status. Space toggles masking when a text field is not being edited.\n\n"
+        "MASK\n"
+        "Choose masking character, strength and voice/noise behavior. Context help beside advanced controls explains how each setting changes intelligibility and masking character.\n\n"
+        "AREA\n"
+        "Configure the listening area and spatial/output assumptions used by the masking model. Use the built-in help buttons when a room or coverage control needs more detail.\n\n"
+        "OUTPUT\n"
+        "Set output behavior and level-related controls. Confirm the intended speakers or audio interface in Settings before starting masking.\n\n"
+        "ANALYSIS\n"
+        "Advanced mode exposes analysis and diagnostic views for inspecting the current masking configuration and engine status.\n\n"
+        "PRESETS, UNDO AND MODIFIED SETTINGS\n"
+        "Save As Preset stores the current configuration. ADVANCED SETTINGS MODIFIED shows differences from the recommendation. "
+        "Reset to Recommended restores the recommended values while preserving the workflow described by the current preset.\n\n"
+        "SETTINGS\n"
+        "Choose the audio device, startup behavior, voice library, UI scale, logging, diagnostic export and fallback policy. "
+        "Show tooltips globally enables or disables hover explanations and is remembered between runs.\n\n"
+        "VOICE LIBRARY AND PRIVACY\n"
+        "Manage Library adds and analyses local recordings used for masking. Logging and diagnostics include path-redaction options in Settings.\n\n"
+        "KEYBOARD\n"
+        "Space  Start / Stop masking\n"
+        "Ctrl+1 ... Ctrl+5  Run, Mask, Area, Output, Analysis\n"
+        "Ctrl+S  Save preset\n"
+        "Ctrl+Z / Ctrl+Shift+Z  Undo / Redo\n"
+        "F1  Open this help\n"
+        "Esc  Close the active dialog\n\n"
+        "TROUBLESHOOTING\n"
+        "If audio is not heard, confirm the selected output device and current engine status first. If the voice library has a problem, "
+        "review its status in Settings and the selected Strict, Safe or Continuous fallback policy. Use Save Diagnostics when support data is required.\n\n"
+        "TOOLTIPS\n"
+        "Hover over controls for concise explanations. Settings > Appearance > Show tooltips turns hover help on or off.",
+        juce::dontSendNotification);
+    body->setFont(fonts::body(14.0f));
     body->setJustificationType(juce::Justification::topLeft);
-    auto d = std::make_unique<OverlayDialog>("Help", std::move(body), 170);
+    auto d = std::make_unique<OverlayDialog>("BabbleForge Help", std::move(body), 620);
     d->addButton("Close", nullptr, true);
     showDialog(std::move(d));
 }

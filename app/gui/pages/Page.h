@@ -32,6 +32,7 @@ struct PageContext {
     EngineBridge& bridge;
     AppSettings& settings;
     std::function<void(const std::string& pageId)> showPage;  // navigate (set by the main window)
+    std::function<void(bool)> setTooltipsEnabled;
 };
 
 class Page : public juce::Component, private AppState::Listener, private EngineBridge::Listener {
